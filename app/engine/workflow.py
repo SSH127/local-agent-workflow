@@ -1004,7 +1004,7 @@ def _collect(state: WorkflowState, launch: Launch, outcome: Any, elapsed: float)
         sub["acceptance_evidence"] = [
             e for e in sub.get("acceptance_evidence", []) if e.get("type") == "manual"
         ] + P.extract_acceptance_evidence(outcome) + violations
-        sub["result_summary"] = (outcome.summary or "")[:2000]
+        P.store_subtask_result(sub, outcome.summary or "")
         sub["error"] = outcome.error
         sub["stop_reason"] = outcome.stop_reason
         sub["last_checkpoint"] = outcome.checkpoint or sub.get("last_checkpoint")
@@ -1345,6 +1345,8 @@ def final_verify_node(state: WorkflowState) -> dict[str, Any]:
             missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」没有被任何子任务覆盖。")
         elif c["status"] == "planned":
             missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」仅有计划覆盖，缺少验收证据。")
+        elif c["status"] == "insufficient":
+            missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」已有子任务完成但证据不足（未验证）。")
     if config.FINAL_VERIFY_LLM and config.PLANNER_ENABLED and not missing:
         payload = []
         for s in plan["subtasks"]:
@@ -1436,7 +1438,7 @@ def final_verify_node(state: WorkflowState) -> dict[str, Any]:
                 "error": reason}
     summary = f"全部 {len(plan['subtasks'])} 个子任务通过验收，最终验收通过。\n" + "\n".join(
         f"条款 {c['id']} ← {', '.join(c['covered_by'])}" for c in clauses) + "\n" + "\n".join(
-        f"[{s['id']}] {s['title']}：{(s.get('result_summary') or '')[:200]}" for s in plan["subtasks"])
+        f"[{s['id']}] {s['title']}：{P.brief_result(s)}" for s in plan["subtasks"])
     _step(state, "final_verify", summary)
     return {"route": "finish", "status": agent_executor.STATUS_SUCCEEDED, "summary": summary,
             "error": None, "stop_reason": agent_executor.STOP_COMPLETED}
@@ -1447,8 +1449,16 @@ def finish_node(state: WorkflowState) -> dict[str, Any]:
 
 
 def fail_node(state: WorkflowState) -> dict[str, Any]:
-    return {"status": agent_executor.STATUS_FAILED,
-            "error": state.get("error") or "Maximum attempts reached"}
+    plan = state["plan"]
+    error = state.get("error") or "Maximum attempts reached"
+    # Persist a structured failure report so the failure is inspectable from
+    # storage/API (``plan["failure_report"]``), not only from the in-memory
+    # object. Never fabricate missing evidence; gaps are listed explicitly.
+    plan["failure_report"] = P.build_failure_report(
+        plan, state.get("run_id", ""), failure_reason=error,
+    )
+    _save(state)
+    return {"status": agent_executor.STATUS_FAILED, "error": error}
 
 
 def needs_attention_node(state: WorkflowState) -> dict[str, Any]:

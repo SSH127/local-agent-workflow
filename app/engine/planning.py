@@ -97,6 +97,11 @@ LEGACY_SOURCES = {"single", "fallback", "legacy"}
 
 KIND_LABELS = {"analyze": "分析", "modify": "修改", "verify": "验证"}
 
+# Bound for the *model-input* summary of a subtask result (``result_summary``).
+# The complete, untruncated result is always kept separately in ``result_full``
+# so the final delivery report never has to rely on a silent cut.
+RESULT_SUMMARY_MAX_CHARS = 2000
+
 _ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 
 # Transient failures: retry the SAME subtask (attempt+1), plan unchanged.
@@ -528,6 +533,7 @@ def _runtime_fields() -> dict[str, Any]:
         "status": SUBTASK_PENDING,
         "attempt_number": 0,
         "result_summary": "",
+        "result_full": "",
         "error": None,
         "stop_reason": "",
         "acceptance_evidence": [],
@@ -1091,37 +1097,180 @@ def _evidence_brief(e: dict[str, Any]) -> str | None:
     return None
 
 
-def subtask_is_verified(subtask: dict[str, Any]) -> bool:
-    """A done subtask counts as *verified* only when it carries evidence that
-    substantiates its own acceptance rule. A bare ``done`` flag — e.g. a manual
-    marker on a modify/verify subtask with no file/check evidence — is a claim,
-    not proof, so it does not count as implemented.
+def subtask_delivery(subtask: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Per-kind delivery assessment of one subtask.
+
+    Returns ``(verified, gaps)`` where ``gaps`` lists the human-readable reasons
+    the subtask does not yet satisfy its own acceptance rule. Each ``kind`` has
+    its own required delivery evidence; a bare ``status == done`` is a claim,
+    not proof, and never counts on its own.
+
+    * ``analyze`` — at least one *successful* tool call (a real read/search/
+      check) or a manual confirmation. Failed tool calls alone are not evidence.
+    * ``modify`` — real file-change evidence (path + hash); a verification
+      command that failed with no later passing one is a delivery gap.
+    * ``verify`` — at least one passing verification command/check (pytest,
+      build, check_http/check_port) or a manual verification note.
     """
     if subtask.get("status") != SUBTASK_DONE:
-        return False
+        return False, ["子任务未完成（status != done）"]
     kind = subtask.get("kind") or "analyze"
     ev = subtask.get("acceptance_evidence") or []
     files = [e for e in ev if e.get("type") == "file"]
     commands = [e for e in ev if e.get("type") == "command"]
     passed = [c for c in commands if c.get("ok")]
+    failed = [c for c in commands if not c.get("ok")]
     manual = [e for e in ev if e.get("type") == "manual"]
+    gaps: list[str] = []
     if kind == "modify":
         # A modification is substantiated by actual file-change evidence only.
-        return bool(files)
-    if kind == "verify":
+        if not files:
+            gaps.append("修改类子任务缺少文件变更证据（路径/哈希）。")
+        if failed and not passed:
+            gaps.append("修改后的验证命令失败，且没有后续通过的验证。")
+    elif kind == "verify":
         # A verification is substantiated by a passing command/check or a manual
         # verification note.
-        return bool(passed) or bool(manual)
-    # analyze: a real read/check happened (tool calls) or the user confirmed it.
-    calls = next((e.get("tool_calls", 0) for e in ev if e.get("type") == "executor_status"), 0)
-    return calls > 0 or bool(manual)
+        if not passed and not manual:
+            gaps.append("验证类子任务缺少通过的验证证据（测试/构建/检查）或人工验证确认。")
+    else:  # analyze
+        # A real read/check happened (a *successful* tool call) or the user
+        # confirmed it. Failed tool calls alone are not evidence.
+        status_ev = next((e for e in ev if e.get("type") == "executor_status"), {})
+        successes = int(status_ev.get("tool_successes") or 0)
+        if successes <= 0 and not manual:
+            gaps.append("分析类子任务缺少成功的工具调用证据（只读分析需实际读取/检查）。")
+    return (not gaps), gaps
+
+
+def subtask_is_verified(subtask: dict[str, Any]) -> bool:
+    """A done subtask counts as *verified* only when its per-kind delivery
+    evidence substantiates its own acceptance rule (see
+    :func:`subtask_delivery`)."""
+    return subtask_delivery(subtask)[0]
+
+
+def store_subtask_result(subtask: dict[str, Any], summary: str | None) -> None:
+    """Persist a subtask's full raw result plus a bounded, clearly-marked
+    summary.
+
+    ``result_summary`` is the *model-input* summary (bounded by
+    ``RESULT_SUMMARY_MAX_CHARS`` and explicitly marked when truncated);
+    ``result_full`` keeps the complete, untruncated text so the final delivery
+    report and the persisted plan can always reference the full result instead
+    of a silent cut.
+    """
+    full = summary or ""
+    subtask["result_full"] = full
+    if len(full) <= RESULT_SUMMARY_MAX_CHARS:
+        subtask["result_summary"] = full
+    else:
+        subtask["result_summary"] = (
+            full[:RESULT_SUMMARY_MAX_CHARS]
+            + f"…（摘要已截断，共 {len(full)} 字符；完整结果见该子任务的 result_full）"
+        )
+
+
+def brief_result(subtask: dict[str, Any], limit: int = 200) -> str:
+    """A compact, *clearly-marked* summary of a subtask's result for reports.
+
+    Never silently truncates: when the full result is longer than ``limit`` the
+    returned string is explicitly marked as a summary and points at
+    ``result_full`` for the complete text.
+    """
+    full = subtask.get("result_full") or subtask.get("result_summary") or ""
+    if len(full) <= limit:
+        return full
+    return full[:limit] + f"…（摘要已截断，共 {len(full)} 字符；完整结果见该子任务 result_full）"
+
+
+def build_failure_report(
+    plan: dict[str, Any],
+    run_id: str,
+    *,
+    failure_reason: str | None = None,
+) -> dict[str, Any]:
+    """Build a structured, storage-readable failure report for a failed run.
+
+    The report never fabricates evidence: ``available_evidence`` contains only
+    what was actually observed (real file changes, passing/failing commands,
+    manual notes, and successful tool-call counts), while anything the subtasks
+    failed to deliver is listed under ``evidence_gaps``. ``result_full`` is
+    carried verbatim (not silently truncated) so the full raw result stays
+    traceable.
+    """
+    fv = plan.get("final_verify") or {}
+    clauses = clause_report(plan)
+
+    unmet: list[str] = []
+    for m in fv.get("missing_clauses") or []:
+        unmet.append(str(m))
+    for c in clauses:
+        if c["status"] != "covered":
+            unmet.append(f"条款 {c['id']}「{c['text'][:80]}」：{c['status']}（证据不足/未验证）")
+    for s in plan.get("subtasks", []):
+        if s.get("status") != SUBTASK_DONE:
+            unmet.append(f"子任务 [{s['id']}] {s.get('title', '')} 状态为 {s.get('status')}")
+    for pf in plan.get("pending_failures") or []:
+        unmet.append(str(pf.get("reason") or f"子任务 {pf.get('subtask_id')} 失败"))
+
+    available_evidence: list[dict[str, Any]] = []
+    evidence_gaps: list[str] = []
+    for m in fv.get("missing_clauses") or []:
+        evidence_gaps.append(f"缺少证据支撑：{m}")
+    for c in clauses:
+        if c["status"] != "covered":
+            evidence_gaps.append(
+                f"目标条款 {c['id']}「{c['text'][:80]}」缺少充分证据（状态：{c['status']}）"
+            )
+    for s in plan.get("subtasks", []):
+        briefs: list[str] = []
+        for e in s.get("acceptance_evidence") or []:
+            b = _evidence_brief(e)
+            if b:
+                briefs.append(b)
+            elif e.get("type") == "executor_status" and int(e.get("tool_successes") or 0) > 0:
+                briefs.append(
+                    f"工具调用成功 {e.get('tool_successes')} 次（共 {e.get('tool_calls') or 0} 次）"
+                )
+        if briefs:
+            available_evidence.append({
+                "subtask_id": s["id"],
+                "kind": s.get("kind"),
+                "evidence": briefs,
+                "result_full": s.get("result_full") or s.get("result_summary") or "",
+            })
+        _, gaps = subtask_delivery(s)
+        for g in gaps:
+            evidence_gaps.append(f"[{s['id']}] {g}")
+
+    reason = failure_reason or str(fv.get("replan_reason") or "") or "运行失败。"
+
+    return {
+        "run_id": run_id,
+        "status": "final_verify_failed" if (fv and fv.get("passed") is False) else "failed",
+        "failure_reason": reason,
+        "unmet_clauses": unmet,
+        "inconsistencies": list(fv.get("inconsistencies") or []),
+        "available_evidence": available_evidence,
+        "evidence_gaps": evidence_gaps,
+        "suggested_next_steps": list(fv.get("suggested_next_steps") or []),
+        "generated_at": _utc_now(),
+    }
 
 
 def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:
     """Per goal clause: which subtasks *plan* to cover it vs which have actually
-    been *verified* (done + substantive evidence). ``status`` is ``covered``
-    (verified), ``planned`` (declared but not yet backed by evidence) or
-    ``missing`` (no subtask declares it)."""
+    been *verified* (done + substantive per-kind evidence).
+
+    ``status`` is one of:
+
+    * ``covered`` — at least one serving subtask is verified;
+    * ``insufficient`` — serving subtasks are done but their evidence does not
+      substantiate the clause (证据不足 / 未验证);
+    * ``planned`` — declared but not yet done;
+    * ``missing`` — no subtask declares it.
+    """
     report = []
     for clause in plan.get("goal_clauses") or []:
         serving = [
@@ -1129,6 +1278,7 @@ def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:
             if clause["id"] in (s.get("serves_clauses") or [])
         ]
         verified = [s for s in serving if subtask_is_verified(s)]
+        done_serving = [s for s in serving if s.get("status") == SUBTASK_DONE]
         evidence: list[str] = []
         for s in verified:
             briefs = [b for b in (_evidence_brief(e) for e in s.get("acceptance_evidence", [])) if b]
@@ -1137,7 +1287,18 @@ def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:
                               if e.get("type") == "executor_status"), 0)
                 briefs = [f"只读执行：工具调用 {calls} 次"]
             evidence.extend(f"[{s['id']}] {b}" for b in briefs[:5])
-        status = "covered" if verified else ("missing" if not serving else "planned")
+        if verified:
+            status = "covered"
+        elif done_serving:
+            status = "insufficient"
+        elif serving:
+            status = "planned"
+        else:
+            status = "missing"
+        gaps: list[str] = []
+        for s in serving:
+            _, sub_gaps = subtask_delivery(s)
+            gaps.extend(f"[{s['id']}] {g}" for g in sub_gaps)
         report.append({
             "id": clause["id"],
             "text": clause["text"],
@@ -1146,6 +1307,7 @@ def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:
             "planned_by": [s["id"] for s in serving],
             "manual": [s["id"] for s in verified if s.get("manual")],
             "evidence": evidence,
+            "gaps": gaps,
         })
     return report
 
@@ -1302,6 +1464,7 @@ def reset_subtask_for_retry(subtask: dict[str, Any]) -> dict[str, Any]:
     s["error"] = None
     s["stop_reason"] = ""
     s["result_summary"] = ""
+    s["result_full"] = ""
     s["finished_at"] = None
     s["finished_seq"] = None
     # Keep acceptance_evidence from the failed attempt for diagnostics.

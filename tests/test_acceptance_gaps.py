@@ -115,7 +115,8 @@ def test_clause_report_distinguishes_planned_from_verified():
         goal="修复并验证",
         goal_clauses=[{"id": "C1", "text": "修复"}, {"id": "C2", "text": "验证"}],
     )
-    # Subtask 1 done but NO file evidence → planned, not covered.
+    # Subtask 1 done but NO file evidence → insufficient (证据不足), not covered
+    # and no longer merely "planned": it claims completion without evidence.
     plan["subtasks"][0]["status"] = P.SUBTASK_DONE
     # Subtask 2 done with a passing command → covered.
     plan["subtasks"][1]["status"] = P.SUBTASK_DONE
@@ -124,7 +125,7 @@ def test_clause_report_distinguishes_planned_from_verified():
         "ok": True, "summary": "exit_code=0",
     }]
     report = {c["id"]: c for c in P.clause_report(plan)}
-    assert report["C1"]["status"] == "planned" and report["C1"]["covered_by"] == []
+    assert report["C1"]["status"] == "insufficient" and report["C1"]["covered_by"] == []
     assert report["C1"]["planned_by"] == ["1"]
     assert report["C2"]["status"] == "covered" and report["C2"]["covered_by"] == ["2"]
 

@@ -663,7 +663,7 @@ def manual_result(run_id: str, subtask_id: str, payload: ManualResultRequest):
     files, hashes = _verified_manual_files(run, payload.files)
     sub["status"] = payload.status
     sub["manual"] = True
-    sub["result_summary"] = f"[人工] {payload.note}"
+    P.store_subtask_result(sub, f"[人工] {payload.note}")
     sub["verify_note"] = "人工标记的结果（manual），未经执行器证据验收"
     sub["finished_at"] = now()
     sub["finished_seq"] = P.next_finish_seq(plan)
