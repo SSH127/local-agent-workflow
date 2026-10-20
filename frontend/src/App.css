@@ -514,16 +514,27 @@ button:disabled { cursor: not-allowed; opacity: .65; }
   overflow: auto;
 }
 .failure-report-missing,
-.failure-report-empty {
+.failure-report-empty,
+.failure-report-pending {
   flex-direction: row;
   align-items: flex-start;
   gap: 9px;
-  color: #a33730;
 }
+.failure-report-missing,
+.failure-report-empty { color: #a33730; }
+.failure-report-pending { border-color: #dfe3ed; background: #f8f9fc; }
 .failure-report-missing strong,
-.failure-report-empty strong { display: block; font-size: 12px; color: #8f2f29; }
+.failure-report-empty strong,
+.failure-report-pending strong { display: block; font-size: 12px; }
+.failure-report-missing strong,
+.failure-report-empty strong { color: #8f2f29; }
+.failure-report-pending strong { color: #4b5563; }
 .failure-report-missing p,
-.failure-report-empty p { margin: 3px 0 0; font-size: 10px; color: #b5675f; line-height: 1.6; }
+.failure-report-empty p,
+.failure-report-pending p { margin: 3px 0 0; font-size: 10px; line-height: 1.6; }
+.failure-report-missing p,
+.failure-report-empty p { color: #b5675f; }
+.failure-report-pending p { color: #8b93a3; }
 .failure-report-head { display: flex; align-items: center; gap: 9px; }
 .fr-head-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #fde8e6; color: #c23b33; flex: 0 0 auto; }
 .failure-report-head strong { display: block; font-size: 12px; color: #8f2f29; }

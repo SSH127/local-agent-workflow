@@ -219,6 +219,24 @@ export default function App() {
   const [error, setError] = useState('')
   const [apiOnline, setApiOnline] = useState(false)
   const [steps, setSteps] = useState<RunStep[]>([])
+  /** A run-detail fetch is in flight (list rows never carry the plan-backed
+   *  failure report), so "report missing" must not be shown yet. */
+  const [detailFetching, setDetailFetching] = useState(false)
+
+  const loadRunDetail = useCallback(async (runId: string) => {
+    setDetailFetching(true)
+    try {
+      const response = await apiFetch(`/runs/${runId}`)
+      if (!response.ok) return
+      const detail = (await response.json()) as Run
+      // Ignore a late response for a run the user already navigated away from.
+      setSelectedRun((current) => (current?.run_id === runId ? detail : current))
+    } catch {
+      // 网络错误时保留上一次的详情，下一次轮询会重试。
+    } finally {
+      setDetailFetching(false)
+    }
+  }, [])
 
   const loadRuns = useCallback(async () => {
     setRefreshing(true)
@@ -232,7 +250,12 @@ export default function App() {
 
       setSelectedRun((current) => {
         if (!current) return items[0] ?? null
-        return items.find((run) => run.run_id === current.run_id) ?? current
+        const fresh = items.find((run) => run.run_id === current.run_id)
+        if (!fresh) return current
+        // Keep the detail-only field: the list endpoint omits the plan-backed
+        // failure report, so replacing the object wholesale would erase a
+        // report the detail fetch already delivered on every poll.
+        return { ...fresh, failure_report: fresh.failure_report ?? current.failure_report }
       })
       setError('')
     } catch (err) {
@@ -248,7 +271,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    void loadRuns()
+    // Deferred one tick: the first paint commits before the load starts, so the
+    // fetch's setState calls never run synchronously inside the effect body.
+    const timer = window.setTimeout(() => void loadRuns(), 0)
+    return () => window.clearTimeout(timer)
   }, [loadRuns])
 
   const loadSteps = useCallback(async (runId: string) => {
@@ -267,7 +293,9 @@ export default function App() {
     const status = selectedRun?.status
 
     if (!runId || !isActiveStatus(status)) {
-      setLiveStream('off')
+      // No subscription needed. The displayed indicator is derived from status
+      // below, so no setState is required here (and none may run synchronously
+      // inside an effect body).
       return
     }
 
@@ -389,14 +417,31 @@ export default function App() {
     }
   }, [selectedRun?.run_id, selectedRun?.status, loadRuns])
 
-  // When a run reaches a terminal state, fetch the final step snapshot once.
+  // When a run reaches a terminal state, fetch the final authoritative snapshot
+  // once: steps, plus the run detail (which carries the plan-backed failure
+  // report) so a just-finished failure is never displayed from a stale list row.
   useEffect(() => {
     const runId = selectedRun?.run_id
     const status = selectedRun?.status
     const settled = ['succeeded', 'failed', 'needs_attention', 'cancelled', 'interrupted']
     if (!runId || !status || !settled.includes(status)) return
-    void loadSteps(runId)
-  }, [selectedRun?.run_id, selectedRun?.status, loadSteps])
+    const timer = window.setTimeout(() => {
+      void loadRunDetail(runId)
+      void loadSteps(runId)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [selectedRun?.run_id, selectedRun?.status, loadRunDetail, loadSteps])
+
+  // A failed run selected from the list (or auto-selected at startup) has no
+  // report yet because list rows never carry it. Fetch the detail once so the
+  // report appears even on a terminal run that no longer polls.
+  const hasFailureReport = Boolean(selectedRun?.failure_report)
+  useEffect(() => {
+    const runId = selectedRun?.run_id
+    if (!runId || selectedRun?.status !== 'failed' || hasFailureReport) return
+    const timer = window.setTimeout(() => void loadRunDetail(runId), 0)
+    return () => window.clearTimeout(timer)
+  }, [selectedRun?.run_id, selectedRun?.status, hasFailureReport, loadRunDetail])
 
   const submitRun = async () => {
     if (loading) return
@@ -449,17 +494,10 @@ export default function App() {
     }
   }
 
-  const selectRun = async (run: Run) => {
+  const selectRun = (run: Run) => {
     setSelectedRun(run)
     void loadSteps(run.run_id)
-    try {
-      const response = await apiFetch(`/runs/${run.run_id}`)
-      if (!response.ok) return
-      const detail = (await response.json()) as Run
-      setSelectedRun(detail)
-    } catch {
-      // 保留列表中的任务信息；网络错误会在刷新或提交时提示。
-    }
+    void loadRunDetail(run.run_id)
   }
 
   const approveRun = async (approved: boolean) => {
@@ -517,19 +555,15 @@ export default function App() {
   const refreshSelected = useCallback(() => {
     const runId = selectedRun?.run_id
     if (!runId) return
-    void (async () => {
-      try {
-        const response = await apiFetch(`/runs/${runId}`)
-        if (response.ok) setSelectedRun((await response.json()) as Run)
-      } catch {
-        // 下一次轮询会重试。
-      }
-      void loadSteps(runId)
-      void loadRuns()
-    })()
-  }, [selectedRun?.run_id, loadSteps, loadRuns])
+    void loadRunDetail(runId)
+    void loadSteps(runId)
+    void loadRuns()
+  }, [selectedRun?.run_id, loadRunDetail, loadSteps, loadRuns])
 
   const currentStatus = selectedRun?.status
+  // Derived, not stored: an inactive run has no live subscription regardless of
+  // what the last connection attempt left in state.
+  const liveStreamShown = isActiveStatus(currentStatus) ? liveStream : 'off'
 
   const isRunning = isActiveStatus(currentStatus)
   const isWaitingApproval = currentStatus === 'waiting_for_approval'
@@ -538,7 +572,7 @@ export default function App() {
 
   const nodes: Node[] = initialNodes.map((node) => {
 
-      let label = ''
+      let label: string
       let className = 'flow-node'
   
       if (node.id === 'input') {
@@ -910,9 +944,9 @@ export default function App() {
                 <div className="detail-content">
                   <div className="detail-status">
                     <span className={`status-pill status-${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>
-                    {liveStream !== 'off' && (
-                      <span className={`live-hint live-${liveStream}`} title={liveStream === 'live' ? 'Server-Sent Events 已连接' : '轮询刷新（SSE 未连接）'}>
-                        {liveStream === 'live' ? '实时' : '轮询'}
+                    {liveStreamShown !== 'off' && (
+                      <span className={`live-hint live-${liveStreamShown}`} title={liveStreamShown === 'live' ? 'Server-Sent Events 已连接' : '轮询刷新（SSE 未连接）'}>
+                        {liveStreamShown === 'live' ? '实时' : '轮询'}
                       </span>
                     )}
                   </div>
@@ -922,7 +956,7 @@ export default function App() {
                   <div className="detail-field"><span>尝试次数</span><p>{selectedRun.attempts ?? '—'}</p></div>
                   <div className="detail-field"><span>执行摘要</span><p>{selectedRun.summary || '暂无摘要'}</p></div>
                   {selectedRun.error && <div className="detail-error">{selectedRun.error}</div>}
-                  <FailureReportCard report={selectedRun.failure_report} runStatus={selectedRun.status} />
+                  <FailureReportCard report={selectedRun.failure_report} runStatus={selectedRun.status} loading={detailFetching} />
                   <div className="detail-field"><span>更新时间</span><p>{formatDate(selectedRun.updated_at)}</p></div>
                 </div>
               ) : (
@@ -988,9 +1022,9 @@ export default function App() {
                 <div className="detail-content">
                   <div className="detail-status">
                     <span className={`status-pill status-${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>
-                    {liveStream !== 'off' && (
-                      <span className={`live-hint live-${liveStream}`} title={liveStream === 'live' ? 'Server-Sent Events 已连接' : '轮询刷新（SSE 未连接）'}>
-                        {liveStream === 'live' ? '实时' : '轮询'}
+                    {liveStreamShown !== 'off' && (
+                      <span className={`live-hint live-${liveStreamShown}`} title={liveStreamShown === 'live' ? 'Server-Sent Events 已连接' : '轮询刷新（SSE 未连接）'}>
+                        {liveStreamShown === 'live' ? '实时' : '轮询'}
                       </span>
                     )}
                   </div>
@@ -1000,7 +1034,7 @@ export default function App() {
                   <div className="detail-field"><span>尝试次数</span><p>{selectedRun.attempts ?? '—'}</p></div>
                   <div className="detail-field"><span>执行摘要</span><p>{selectedRun.summary || '暂无摘要'}</p></div>
                   {selectedRun.error && <div className="detail-error">{selectedRun.error}</div>}
-                  <FailureReportCard report={selectedRun.failure_report} runStatus={selectedRun.status} />
+                  <FailureReportCard report={selectedRun.failure_report} runStatus={selectedRun.status} loading={detailFetching} />
                   <div className="detail-field"><span>更新时间</span><p>{formatDate(selectedRun.updated_at)}</p></div>
                 </div>
               ) : (

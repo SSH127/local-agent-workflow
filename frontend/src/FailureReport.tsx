@@ -1,4 +1,4 @@
-import { CircleAlert, FileWarning } from 'lucide-react'
+import { CircleAlert, Clock3, FileWarning } from 'lucide-react'
 import {
   failureEvidence,
   failureReportSections,
@@ -40,14 +40,29 @@ function Section({ title, items, isEmpty }: { title: string; items: string[]; is
 export default function FailureReportCard({
   report,
   runStatus,
+  loading = false,
 }: {
   report?: FailureReport | null
   runStatus?: string
+  /** A run-detail fetch is in flight, so this run's report may not have arrived
+   *  yet. Shows a neutral pending state instead of "report unavailable". */
+  loading?: boolean
 }) {
   // Successful runs keep their original summary view untouched.
   if (runStatus === 'succeeded') return null
 
   if (!hasFailureReport(report)) {
+    if (loading) {
+      return (
+        <div className="failure-report failure-report-pending">
+          <Clock3 size={16} />
+          <div>
+            <strong>正在加载失败报告</strong>
+            <p>正在读取该运行的详情。</p>
+          </div>
+        </div>
+      )
+    }
     if (runStatus === 'failed') {
       return (
         <div className="failure-report failure-report-missing">
