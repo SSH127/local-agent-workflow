@@ -36,6 +36,8 @@ import {
   SSE_POLL_FALLBACK_MS,
 } from './api'
 import PlanPanel from './PlanPanel'
+import FailureReportCard from './FailureReport'
+import type { FailureReport } from './failureReportModel'
 
 // Must stay in sync with ``app/main.py`` InputRequest.message max_length.
 const INPUT_MAX_CHARS = 4000
@@ -57,6 +59,7 @@ type Run = {
     pending_input?: { input_id?: string; question?: string } | null
     [key: string]: unknown
   } | null
+  failure_report?: FailureReport | null
 }
 
 type RunStep = {
@@ -919,6 +922,7 @@ export default function App() {
                   <div className="detail-field"><span>尝试次数</span><p>{selectedRun.attempts ?? '—'}</p></div>
                   <div className="detail-field"><span>执行摘要</span><p>{selectedRun.summary || '暂无摘要'}</p></div>
                   {selectedRun.error && <div className="detail-error">{selectedRun.error}</div>}
+                  <FailureReportCard report={selectedRun.failure_report} runStatus={selectedRun.status} />
                   <div className="detail-field"><span>更新时间</span><p>{formatDate(selectedRun.updated_at)}</p></div>
                 </div>
               ) : (
@@ -996,6 +1000,7 @@ export default function App() {
                   <div className="detail-field"><span>尝试次数</span><p>{selectedRun.attempts ?? '—'}</p></div>
                   <div className="detail-field"><span>执行摘要</span><p>{selectedRun.summary || '暂无摘要'}</p></div>
                   {selectedRun.error && <div className="detail-error">{selectedRun.error}</div>}
+                  <FailureReportCard report={selectedRun.failure_report} runStatus={selectedRun.status} />
                   <div className="detail-field"><span>更新时间</span><p>{formatDate(selectedRun.updated_at)}</p></div>
                 </div>
               ) : (

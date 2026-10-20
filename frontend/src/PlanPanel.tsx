@@ -860,7 +860,7 @@ export default function PlanPanel({
           ))}
         </div>
       )}
-      {plan.notes.length > 0 && <div className="input-hint">{plan.notes.join('；')}</div>}
+      {(plan.notes ?? []).length > 0 && <div className="input-hint">{(plan.notes ?? []).join('；')}</div>}
     </div>
   )
 }

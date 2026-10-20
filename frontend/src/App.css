@@ -500,3 +500,63 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 .live-live { background: #e8f8f1; color: #17724a; }
 .live-poll { background: #f3f4f6; color: #6b7280; }
 .detail-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+
+/* ---- Structured failure report (task detail) ---- */
+.failure-report {
+  border: 1px solid #f1c9c6;
+  border-radius: 9px;
+  background: #fff7f6;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow: auto;
+}
+.failure-report-missing,
+.failure-report-empty {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 9px;
+  color: #a33730;
+}
+.failure-report-missing strong,
+.failure-report-empty strong { display: block; font-size: 12px; color: #8f2f29; }
+.failure-report-missing p,
+.failure-report-empty p { margin: 3px 0 0; font-size: 10px; color: #b5675f; line-height: 1.6; }
+.failure-report-head { display: flex; align-items: center; gap: 9px; }
+.fr-head-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #fde8e6; color: #c23b33; flex: 0 0 auto; }
+.failure-report-head strong { display: block; font-size: 12px; color: #8f2f29; }
+.failure-report-head p { margin: 2px 0 0; font-size: 10px; color: #b5675f; line-height: 1.5; overflow-wrap: anywhere; }
+.fr-reason {
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #fdebe9;
+  color: #7f2b25;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.fr-section { border-top: 1px solid #f3dcd9; padding-top: 8px; }
+.fr-section-title { font-size: 10px; font-weight: 700; color: #9a5a52; margin-bottom: 6px; }
+.fr-list { margin: 0; padding-left: 16px; font-size: 11px; color: #4d5569; line-height: 1.7; }
+.fr-list li { margin: 2px 0; overflow-wrap: anywhere; }
+.fr-empty { font-size: 10px; color: #b0a3a0; }
+.fr-evidence { display: flex; flex-direction: column; gap: 6px; }
+.fr-evidence-item { border: 1px solid #f3dcd9; border-radius: 7px; background: #fff; }
+.fr-evidence-item summary { cursor: pointer; padding: 7px 9px; font-size: 11px; color: #6d554f; overflow-wrap: anywhere; }
+.fr-evidence-body { padding: 0 10px 9px; }
+.fr-full-result {
+  margin: 7px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #faf7f5;
+  color: #4d5569;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+  font-family: 'DM Sans', 'Noto Sans SC', monospace;
+}

@@ -199,12 +199,32 @@ def get_runs(limit: int = Query(default=50, ge=1, le=200)):
     return list_runs(limit)
 
 
+def _attach_failure_report(run: dict) -> dict:
+    """Attach the persisted ``failure_report`` (if any) to a run detail payload.
+
+    The structured failure report is written by the final ``fail_node`` into the
+    run's plan (``plan["failure_report"]``), not into the ``runs`` row. Merging it
+    here keeps the failure deliverable available on the one endpoint the frontend
+    already polls for run details, without exposing the full plan or any internal
+    object. A run without a report (or a legacy record) is returned unchanged, so
+    historical run details never crash.
+    """
+    if isinstance(run.get("failure_report"), dict):
+        return run
+    plan = storage.get_plan(run["run_id"])
+    report = (plan or {}).get("failure_report")
+    if isinstance(report, dict) and report:
+        run = dict(run)
+        run["failure_report"] = report
+    return run
+
+
 @app.get("/runs/{run_id}", dependencies=[Depends(require_token)])
 def get_run_by_id(run_id: str):
     run = get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run
+    return _attach_failure_report(run)
 
 
 @app.get("/runs/{run_id}/steps", dependencies=[Depends(require_token)])

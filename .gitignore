@@ -3,6 +3,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
+.env.local
+.env.*.local
+agent_scratch/
+.agent_scratch/
 data/
 *.py[cod]
 .DS_Store

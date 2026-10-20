@@ -242,3 +242,73 @@ def test_failure_report_preserves_full_result_without_silent_truncation(
     # The final delivery report must carry the full result, not a silent cut.
     full_results = [e.get("result_full") for e in report["available_evidence"]]
     assert long_summary in full_results
+
+
+# ---------------------------------------------------------------------------
+# API surface: the persisted report is readable through real routes
+# ---------------------------------------------------------------------------
+
+
+def test_api_run_detail_and_plan_return_failure_report(planner_on, monkeypatch, tmp_path):
+    """The failure report is readable via real HTTP routes, not only storage."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    # Isolate storage so this API test does not touch the shared dev DB.
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "api-report.sqlite3")
+    storage.init_db()
+
+    monkeypatch.setattr(config, "FINAL_VERIFY_LLM", True)
+    monkeypatch.setattr(config, "FINAL_VERIFY_REPLAN", False)
+    make_run_row("run-api-report", status="running")
+    store = W.StoragePlanStore("run-api-report")
+    llm = PlannerLLM([plan_json(sub("1")), _review_fail(["缺口"])])
+    res = run("分析并部署", llm, Recorder(store), FakeExecutor({}), monkeypatch,
+              planner_on, run_id="run-api-report")
+    assert res["status"] == "failed", res
+
+    # The real runner marks the run row failed after run_workflow returns;
+    # mirror that final write so the detail endpoint reports the terminal state.
+    row = storage.get_run("run-api-report")
+    row["status"] = "failed"
+    row["summary"] = ""
+    row["error"] = res["error"]
+    storage.save_run(row)
+
+    with TestClient(app) as client:
+        detail = client.get("/runs/run-api-report").json()
+        assert detail["status"] == "failed"
+        report = detail.get("failure_report")
+        assert report is not None
+        assert report["run_id"] == "run-api-report"
+        assert report["failure_reason"]
+        assert "缺口" in report["failure_reason"]
+        assert isinstance(report["unmet_clauses"], list)
+        assert isinstance(report["inconsistencies"], list)
+        assert isinstance(report["available_evidence"], list)
+        assert isinstance(report["evidence_gaps"], list)
+        assert isinstance(report["suggested_next_steps"], list)
+
+        # The plan route exposes the same persisted report (single source of truth).
+        plan_view = client.get("/runs/run-api-report/plan").json()
+        plan_report = plan_view["plan"].get("failure_report")
+        assert plan_report is not None
+        assert "缺口" in plan_report["failure_reason"]
+
+
+def test_api_run_detail_without_report_degrades_safely(planner_on, monkeypatch, tmp_path):
+    """A legacy failed run with no persisted report must not crash the detail
+    route; it simply returns no ``failure_report`` field."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setattr(storage, "DATABASE_PATH", tmp_path / "api-noreport.sqlite3")
+    storage.init_db()
+
+    make_run_row("run-no-report", status="failed")
+    with TestClient(app) as client:
+        detail = client.get("/runs/run-no-report").json()
+        assert detail["status"] == "failed"
+        assert detail.get("failure_report") is None
