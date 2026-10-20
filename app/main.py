@@ -623,8 +623,9 @@ def manual_result(run_id: str, subtask_id: str, payload: ManualResultRequest):
     sub["result_summary"] = f"[人工] {payload.note}"
     sub["verify_note"] = "人工标记的结果（manual），未经执行器证据验收"
     sub["finished_at"] = now()
-    sub.setdefault("acceptance_evidence", []).append(
-        P.manual_evidence(payload.note, payload.evidence_text, payload.status))
+    sub["finished_seq"] = P.next_finish_seq(plan)
+    sub.setdefault("acceptance_evidence", []).extend(
+        P.manual_evidence(payload.note, payload.evidence_text, payload.status, payload.files))
     _intervene(sub, {"type": "manual_result", "status": payload.status, "note": payload.note})
     if plan.get("pending_confirmation") == subtask_id:
         plan["pending_confirmation"] = None

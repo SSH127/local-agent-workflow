@@ -845,6 +845,15 @@ def run_agent(
             memory.record_command(program, argv, data.get("exit_code"), ok)
             if is_verifying_tool_call(name, args):
                 memory.record_test_evidence(program, argv, ok, output)
+        if name in ("check_http", "check_port"):
+            # A passed HTTP/port check is pass/fail verification evidence, just
+            # like a test/build command — a verify subtask may be accepted on it.
+            target = (
+                str(args.get("url", ""))
+                if name == "check_http"
+                else f"{args.get('host', '127.0.0.1')}:{args.get('port', '')}"
+            )
+            memory.record_test_evidence(name, [target], ok, output)
         if not ok:
             # Failed evidence must survive history compression: record it in
             # memory so a truncated old tool message never erases the reason.

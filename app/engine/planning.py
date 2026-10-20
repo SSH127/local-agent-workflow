@@ -539,6 +539,7 @@ def _runtime_fields() -> dict[str, Any]:
         "tokens": {"prompt": 0, "completion": 0, "total": 0, "estimated": False},
         "started_at": None,
         "finished_at": None,
+        "finished_seq": None,
     }
 
 
@@ -912,15 +913,49 @@ def extract_acceptance_evidence(outcome: Any) -> list[dict[str, Any]]:
     return evidence
 
 
-def manual_evidence(note: str, evidence_text: str, status: str) -> dict[str, Any]:
-    return {
+def manual_evidence(
+    note: str, evidence_text: str, status: str, files: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Evidence items for a manually-marked subtask result.
+
+    The manual note and any *declared file changes* are kept as separate items
+    so overall acceptance can weigh them independently: a note alone must never
+    satisfy a "code must change" requirement, while a declared change is counted
+    as real file evidence (without a hash — the user asserts it on disk).
+    """
+    at = _utc_now()
+    items: list[dict[str, Any]] = []
+    for path in (files or []):
+        path = str(path).strip().replace("\\", "/")
+        if path:
+            items.append({"type": "file", "path": path, "sha256": "",
+                          "manual": True, "at": at})
+    items.append({
         "type": "manual",
         "by": "user",
         "status": status,
         "note": (note or "")[:2000],
         "evidence_text": (evidence_text or "")[:8000],
-        "at": _utc_now(),
-    }
+        "at": at,
+    })
+    return items
+
+
+def next_finish_seq(plan: dict[str, Any]) -> int:
+    """Monotonic completion ordinal for the whole run (survives resume/restart).
+
+    Final verification must order evidence by *actual* execution/completion,
+    not by the static ``plan["subtasks"]`` list order (parallel subtasks finish
+    in scheduler order). A wall-clock timestamp alone can collide or skew across
+    workers, so each completed subtask is stamped with an integer ordinal that
+    is strictly increasing in completion order.
+
+    Derived from the persisted plan (``max(existing)+1``) rather than an
+    in-process counter, so the sequence stays monotonic even when the control
+    loop restarts mid-run (``finished_at`` remains as a secondary tie-break).
+    """
+    subs = plan.get("subtasks") or []
+    return max((int(s.get("finished_seq") or 0) for s in subs), default=0) + 1
 
 
 def contract_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
@@ -1045,33 +1080,60 @@ def _evidence_brief(e: dict[str, Any]) -> str | None:
     return None
 
 
+def subtask_is_verified(subtask: dict[str, Any]) -> bool:
+    """A done subtask counts as *verified* only when it carries evidence that
+    substantiates its own acceptance rule. A bare ``done`` flag — e.g. a manual
+    marker on a modify/verify subtask with no file/check evidence — is a claim,
+    not proof, so it does not count as implemented.
+    """
+    if subtask.get("status") != SUBTASK_DONE:
+        return False
+    kind = subtask.get("kind") or "analyze"
+    ev = subtask.get("acceptance_evidence") or []
+    files = [e for e in ev if e.get("type") == "file"]
+    commands = [e for e in ev if e.get("type") == "command"]
+    passed = [c for c in commands if c.get("ok")]
+    manual = [e for e in ev if e.get("type") == "manual"]
+    if kind == "modify":
+        # A modification is substantiated by actual file-change evidence only.
+        return bool(files)
+    if kind == "verify":
+        # A verification is substantiated by a passing command/check or a manual
+        # verification note.
+        return bool(passed) or bool(manual)
+    # analyze: a real read/check happened (tool calls) or the user confirmed it.
+    calls = next((e.get("tool_calls", 0) for e in ev if e.get("type") == "executor_status"), 0)
+    return calls > 0 or bool(manual)
+
+
 def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    """Per goal clause: which ACCEPTED subtasks cover it, with which evidence."""
+    """Per goal clause: which subtasks *plan* to cover it vs which have actually
+    been *verified* (done + substantive evidence). ``status`` is ``covered``
+    (verified), ``planned`` (declared but not yet backed by evidence) or
+    ``missing`` (no subtask declares it)."""
     report = []
     for clause in plan.get("goal_clauses") or []:
-        covering = [
+        serving = [
             s for s in plan.get("subtasks", [])
-            if clause["id"] in (s.get("serves_clauses") or []) and s.get("status") == SUBTASK_DONE
-        ]
-        planned = [
-            s["id"] for s in plan.get("subtasks", [])
             if clause["id"] in (s.get("serves_clauses") or [])
         ]
+        verified = [s for s in serving if subtask_is_verified(s)]
         evidence: list[str] = []
-        for s in covering:
+        for s in verified:
             briefs = [b for b in (_evidence_brief(e) for e in s.get("acceptance_evidence", [])) if b]
             if not briefs:
                 calls = next((e.get("tool_calls") for e in s.get("acceptance_evidence", [])
                               if e.get("type") == "executor_status"), 0)
                 briefs = [f"只读执行：工具调用 {calls} 次"]
             evidence.extend(f"[{s['id']}] {b}" for b in briefs[:5])
+        status = "covered" if verified else ("missing" if not serving else "planned")
         report.append({
             "id": clause["id"],
             "text": clause["text"],
-            "status": "covered" if covering else "missing",
-            "covered_by": [s["id"] for s in covering],
-            "manual": [s["id"] for s in covering if s.get("manual")],
-            "planned_by": planned,
+            "status": status,
+            "covered_by": [s["id"] for s in verified],
+            "planned_by": [s["id"] for s in serving],
+            "manual": [s["id"] for s in verified if s.get("manual")],
             "evidence": evidence,
         })
     return report
@@ -1116,14 +1178,11 @@ def accept_subtask(
         return True, "修改类子任务：存在文件变更证据，执行器判定成功。"
 
     if kind == "verify":
-        if not passed_cmds and not files:
-            # verify may also succeed via check_http/check_port recorded only in
-            # tool_counts; require at least executor success + tools.
-            if tool_calls > 0:
-                return True, "验证类子任务：执行器判定成功并有工具调用。"
-            return False, "验证类子任务缺少命令/检查证据。"
-        if failed_cmds and not passed_cmds:
-            return False, "验证命令失败。"
+        # Verification must be substantiated by at least one passing command /
+        # check (pytest / build / check_http / check_port). Reading or searching
+        # code is preparation, not proof, so a bare tool call never passes.
+        if not passed_cmds:
+            return False, "验证类子任务缺少通过的命令/检查证据（测试、构建或端口/HTTP 检查均未通过）。"
         return True, "验证类子任务：存在通过的验证证据。"
 
     return True, "已按执行器成功规则接受。"
@@ -1233,6 +1292,7 @@ def reset_subtask_for_retry(subtask: dict[str, Any]) -> dict[str, Any]:
     s["stop_reason"] = ""
     s["result_summary"] = ""
     s["finished_at"] = None
+    s["finished_seq"] = None
     # Keep acceptance_evidence from the failed attempt for diagnostics.
     return s
 

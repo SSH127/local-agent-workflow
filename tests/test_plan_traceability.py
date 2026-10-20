@@ -163,10 +163,17 @@ def test_clause_report_marks_missing_when_serving_subtask_not_accepted():
         [sub("1", serves=("C1",)), sub("2", deps=["1"], serves=("C2",))], "llm",
         requires_approval=False, goal=TWO_CLAUSES, goal_clauses=P.split_goal_clauses(TWO_CLAUSES))
     plan["subtasks"][0]["status"] = P.SUBTASK_DONE
+    # A done analyze subtask is only "covered" when it carries tool-call evidence.
+    plan["subtasks"][0]["acceptance_evidence"] = [
+        {"type": "executor_status", "status": "succeeded", "tool_calls": 1,
+         "tool_successes": 1, "tool_failures": 0},
+    ]
     plan["subtasks"][1]["status"] = P.SUBTASK_SKIPPED
     report = {c["id"]: c for c in P.clause_report(plan)}
     assert report["C1"]["status"] == "covered"
-    assert report["C2"]["status"] == "missing" and report["C2"]["covered_by"] == []
+    # A skipped serving subtask declares the clause but cannot verify it → the
+    # clause is "planned" (declared, not implemented), not "covered".
+    assert report["C2"]["status"] == "planned" and report["C2"]["covered_by"] == []
     assert report["C2"]["planned_by"] == ["2"]
 
 

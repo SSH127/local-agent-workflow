@@ -132,3 +132,8 @@ class ManualResultRequest(BaseModel):
     status: Literal["done", "failed", "skipped"]
     note: str = Field(min_length=1, max_length=2000)
     evidence_text: str = Field(default="", max_length=8000)
+    # Workspace-relative paths the user confirms were actually changed. Kept
+    # separate from the note so a manual note alone never satisfies a
+    # "code must change" requirement, while a declared change is counted as
+    # real file evidence.
+    files: list[str] = Field(default_factory=list, max_length=100)

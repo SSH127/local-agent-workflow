@@ -1015,6 +1015,7 @@ def verify_subtask_node(state: WorkflowState) -> dict[str, Any]:
         sub["error"] = outcome.error
         sub["stop_reason"] = outcome.stop_reason
         sub["finished_at"] = utc_now()
+        sub["finished_seq"] = P.next_finish_seq(plan)
         plan["current_subtask_id"] = None
         _save(state)
         _step(state, "subtask", f"子任务 [{sub['id']}] 已取消", subtask_id=sub["id"],
@@ -1030,6 +1031,7 @@ def verify_subtask_node(state: WorkflowState) -> dict[str, Any]:
             note += f"（写入范围拦截 {len(violations)} 次越界写入，已记录为证据）"
     sub["verify_note"] = note
     sub["finished_at"] = utc_now()
+    sub["finished_seq"] = P.next_finish_seq(plan)
     if ok:
         sub["status"] = P.SUBTASK_DONE
         plan["current_subtask_id"] = None
@@ -1190,8 +1192,11 @@ def _final_rule_checks(state: WorkflowState) -> tuple[list[str], list[str]]:
     if not_done:
         missing.append("以下子任务未成功完成：" + ", ".join(f"[{s['id']}] {s['status']}" for s in not_done))
     files = [(s, e) for s in subs for e in s.get("acceptance_evidence", []) if e.get("type") == "file"]
-    if goal_requires_mutation(state["goal"]) and not files and not any(s.get("manual") for s in subs):
-        missing.append("原始目标要求修改代码，但所有子任务都没有文件变更证据。")
+    # A manual takeover must NOT silently exempt the file-change requirement:
+    # manual file declarations already arrive as ``file`` evidence above, so a
+    # mutation goal with no file evidence is a gap regardless of ``manual``.
+    if goal_requires_mutation(state["goal"]) and not files:
+        missing.append("原始目标要求修改代码，但所有子任务都没有文件变更证据（人工标记本身不能豁免该项检查）。")
     # Cross-subtask consistency: the last recorded hash of each file must still
     # match the disk (a later subtask must not have silently undone it).
     root = Path(state.get("workspace") or config.WORKSPACE_PATH)
@@ -1209,9 +1214,17 @@ def _final_rule_checks(state: WorkflowState) -> tuple[list[str], list[str]]:
         if disk != digest:
             inconsistent.append(f"文件 {path} 的当前内容与子任务 {sid} 记录的证据不一致（之后被改动）。")
     # A modification must be followed by a passing verification somewhere later.
+    # Order by actual completion order (monotonic ``finished_seq``, with the
+    # wall-clock ``finished_at`` as a tie-break), NOT the static plan list order:
+    # parallel subtasks finish in scheduler order, so the list order does not
+    # reflect when a file was last modified relative to a verification.
+    ordered_subs = sorted(
+        subs,
+        key=lambda s: (int(s.get("finished_seq") or 0), s.get("finished_at") or ""),
+    )
     seen_mod = False
     verified_after = True
-    for s in subs:
+    for s in ordered_subs:
         ev = s.get("acceptance_evidence", [])
         if any(e.get("type") == "file" for e in ev):
             seen_mod, verified_after = True, False
@@ -1231,15 +1244,27 @@ def final_verify_node(state: WorkflowState) -> dict[str, Any]:
     missing, inconsistent = _final_rule_checks(state)
     clauses = P.clause_report(plan)
     for c in clauses:
-        if c["status"] != "covered":
-            missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」没有被任何已验收子任务覆盖。")
+        if c["status"] == "missing":
+            missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」没有被任何子任务覆盖。")
+        elif c["status"] == "planned":
+            missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」仅有计划覆盖，缺少验收证据。")
     notes: list[str] = []
     if config.FINAL_VERIFY_LLM and config.PLANNER_ENABLED and not missing:
-        payload = [{"id": s["id"], "title": s["title"], "kind": s["kind"],
-                    "manual": bool(s.get("manual")),
-                    "serves_clauses": s.get("serves_clauses") or [],
-                    "result_summary": (s.get("result_summary") or "")[:400]}
-                   for s in plan["subtasks"]]
+        payload = []
+        for s in plan["subtasks"]:
+            briefs = [
+                b for b in (P._evidence_brief(e) for e in s.get("acceptance_evidence", []))
+                if b
+            ]
+            payload.append({
+                "id": s["id"], "title": s["title"], "kind": s["kind"],
+                "manual": bool(s.get("manual")),
+                "serves_clauses": s.get("serves_clauses") or [],
+                "result_summary": (s.get("result_summary") or "")[:400],
+                # Evidence (command exit codes, file hashes, checks) so the
+                # reviewer can weigh cross-subtask consistency, not just prose.
+                "evidence": briefs[:10],
+            })
         clause_text = "\n".join(f"{c['id']}: {c['text']}" for c in plan.get("goal_clauses") or [])
         try:
             import json as _json

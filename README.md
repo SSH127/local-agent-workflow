@@ -126,7 +126,9 @@ flowchart TD
 - **最终验收是独立出口，不是子任务**，重规划无法删掉它；子任务全部通过 ≠ 目标达成。它只检查
   **合并结果 vs 原始目标**，不重复逐个子任务的验收：
   - 规则检查：是否有未完成子任务；目标要求改代码却没有任何文件变更证据；各文件当前磁盘哈希是否
-    与最后一次证据一致（后续子任务是否悄悄改回/改坏）；最后一次修改之后是否有通过的验证命令。
+    与最后一次证据一致（后续子任务是否悄悄改回/改坏）；最后一次修改之后是否有通过的验证命令
+    （按**实际完成顺序**判断：每个子任务完成时记录单调递增的 `finished_seq`，并行执行时以它为序，
+    `finished_at` 仅作时间戳佐证，不依赖任务图静态列表顺序）。
   - 可选模型复核（`FINAL_VERIFY_LLM=true` 且启用规划器）：只输出原始目标中**遗漏的条款**和
     **子任务之间的矛盾**。
 - **目标条款追踪**：原始目标在第一次拆解时**冻结**（存于 `run_plans.goal_json`，之后任何写入若改动
@@ -197,7 +199,7 @@ flowchart LR
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/runs/{id}/events` | SSE：status/step/approval/input/state（进程内推送；轮询仍为兜底） |
+| GET | `/runs/{id}/events` | SSE：status/step/approval/input/state（事件持久化到 `run_events`；`?after_seq=` 断线回放，默认从 SQLite 追尾；轮询仍为兜底） |
 | GET | `/runs/{id}/plan` | 任务图 + 租约（`leases` 为每子任务租约，`lease` 为最近心跳的一份，兼容旧前端）+ `plan_revision`、`max_parallel`、`clause_report` + token/费用 |
 | GET | `/runs/{id}/plan/versions` | 只追加的版本历史摘要（版本、修订、父版本、原因、失败分类、时间、子任务数）+ 冻结的目标条款 |
 | GET | `/runs/{id}/plan/versions/{v}?revision=r` | 某个历史版本的完整任务图 + 相对父版本的 diff（不传 `revision` 取该版本最新修订） |
