@@ -915,21 +915,32 @@ def extract_acceptance_evidence(outcome: Any) -> list[dict[str, Any]]:
 
 def manual_evidence(
     note: str, evidence_text: str, status: str, files: list[str] | None = None,
+    hashes: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Evidence items for a manually-marked subtask result.
 
     The manual note and any *declared file changes* are kept as separate items
     so overall acceptance can weigh them independently: a note alone must never
     satisfy a "code must change" requirement, while a declared change is counted
-    as real file evidence (without a hash — the user asserts it on disk).
+    as real file evidence.
+
+    ``hashes`` carries the post-claim content hash the *server* computed from
+    disk for each declared path. Accepted callers (the ``manual-result``
+    endpoint) verify existence/hash before calling this, so a manual file claim
+    can never be stronger than the real file state it was checked against; the
+    final hash-consistency check then applies to it like executor evidence.
     """
     at = _utc_now()
     items: list[dict[str, Any]] = []
     for path in (files or []):
         path = str(path).strip().replace("\\", "/")
         if path:
-            items.append({"type": "file", "path": path, "sha256": "",
-                          "manual": True, "at": at})
+            digest = str((hashes or {}).get(path) or "")
+            item: dict[str, Any] = {"type": "file", "path": path, "sha256": digest,
+                                    "manual": True, "at": at}
+            if digest:
+                item["verified_by"] = "server"
+            items.append(item)
     items.append({
         "type": "manual",
         "by": "user",

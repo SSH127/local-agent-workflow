@@ -1,6 +1,7 @@
 import copy
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -32,6 +33,7 @@ from app.storage import (
     transition_run_status,
 )
 from app.tools import security
+from app.write_guard import content_hash
 
 runner = Runner()
 
@@ -611,6 +613,45 @@ def get_plan_version(run_id: str, version: int, revision: int | None = Query(def
     return {"run_id": run_id, **entry}
 
 
+def _verified_manual_files(run: dict, files: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Resolve user-declared changed files against the run's workspace.
+
+    A manual file claim is accepted only when the server can confirm the file
+    exists inside the workspace; the content hash is computed here so overall
+    acceptance checks the same server-verified state as executor evidence. A
+    claim that does not match real disk state is rejected (400) rather than
+    silently recorded as proof.
+    """
+    if not files:
+        return [], {}
+    root = Path(run.get("workspace_path") or config.WORKSPACE_PATH)
+    paths: list[str] = []
+    hashes: dict[str, str] = {}
+    for raw in files:
+        claimed = str(raw or "").strip()
+        if not claimed:
+            continue
+        try:
+            target = security.resolve_workspace_path(claimed, root)
+        except security.SecurityError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not target.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail=f"声明的文件不存在：{claimed}（人工文件证据必须对应磁盘上真实存在的文件）",
+            )
+        try:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"无法读取声明的文件：{claimed}（{exc}）",
+            ) from exc
+        rel = target.relative_to(Path(root).resolve()).as_posix()
+        paths.append(rel)
+        hashes[rel] = content_hash(text)
+    return paths, hashes
+
+
 @app.post("/runs/{run_id}/subtasks/{subtask_id}/manual-result",
           dependencies=[Depends(require_token)])
 def manual_result(run_id: str, subtask_id: str, payload: ManualResultRequest):
@@ -618,6 +659,8 @@ def manual_result(run_id: str, subtask_id: str, payload: ManualResultRequest):
     _require_paused(run)
     plan = _plan_or_404(run_id)
     sub = _sub_or_404(plan, subtask_id)
+    # Validate + hash declared files BEFORE mutating any subtask state.
+    files, hashes = _verified_manual_files(run, payload.files)
     sub["status"] = payload.status
     sub["manual"] = True
     sub["result_summary"] = f"[人工] {payload.note}"
@@ -625,7 +668,7 @@ def manual_result(run_id: str, subtask_id: str, payload: ManualResultRequest):
     sub["finished_at"] = now()
     sub["finished_seq"] = P.next_finish_seq(plan)
     sub.setdefault("acceptance_evidence", []).extend(
-        P.manual_evidence(payload.note, payload.evidence_text, payload.status, payload.files))
+        P.manual_evidence(payload.note, payload.evidence_text, payload.status, files, hashes))
     _intervene(sub, {"type": "manual_result", "status": payload.status, "note": payload.note})
     if plan.get("pending_confirmation") == subtask_id:
         plan["pending_confirmation"] = None

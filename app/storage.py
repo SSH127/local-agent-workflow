@@ -336,6 +336,12 @@ def _goal_payload(plan: dict[str, Any]) -> str | None:
 def save_plan(run_id: str, plan: dict[str, Any], db_path: Path | None = None) -> None:
     goal = _goal_payload(plan)
     with _connect(db_path) as conn:
+        # BEGIN IMMEDIATE makes the freeze check and the write ONE transaction
+        # across processes. Without it the read is not part of the write
+        # transaction, so two runners can both see "no goal yet" and the second
+        # commit silently replaces the first runner's frozen goal. (Within a
+        # process ``_DB_LOCK`` already serializes, but that lock is process-local.)
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT goal_json FROM run_plans WHERE run_id = ?", (run_id,)
         ).fetchone()

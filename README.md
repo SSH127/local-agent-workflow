@@ -129,6 +129,11 @@ flowchart TD
     与最后一次证据一致（后续子任务是否悄悄改回/改坏）；最后一次修改之后是否有通过的验证命令
     （按**实际完成顺序**判断：每个子任务完成时记录单调递增的 `finished_seq`，并行执行时以它为序，
     `finished_at` 仅作时间戳佐证，不依赖任务图静态列表顺序）。
+  - **历史任务的完成顺序策略**（升级前创建的、已含任务图但没有 `finished_seq` 的计划）：
+    排序规则是**全有或全无**的降级链——全部子任务都有 `finished_seq` → 用序号；否则全部都有
+    `finished_at` → 整体改用时间戳（不混排，混排会把所有旧条目排到最前面）；再否则 → 静态计划
+    顺序。使用降级规则时会在 `final_verify.notes` 中写明当前用的是时间戳还是计划顺序，计划顺序
+    意味着“最后一次修改之后是否有验证”只能按静态顺序判断。
   - 可选模型复核（`FINAL_VERIFY_LLM=true` 且启用规划器）：只输出原始目标中**遗漏的条款**和
     **子任务之间的矛盾**。
 - **目标条款追踪**：原始目标在第一次拆解时**冻结**（存于 `run_plans.goal_json`，之后任何写入若改动
@@ -173,7 +178,10 @@ flowchart LR
   心跳；某一分支失败只记入 `pending_failures`，等没有执行中、也没有无关的就绪子任务时才重规划/失败，
   不会阻塞无关分支；暂停（计划审批、高风险确认、熔断、取消）也会先等执行中的子任务结束。熔断按
   “已结算 + 执行中实时”的步数/token 计算，步数预算在并行启动时预留；所有 SQLite 写入经进程级锁串行化，
-  计划修改在控制线程上进行。工具审批/提问同一时刻只弹出一个（其余子任务排队等待）。
+  计划修改在控制线程上进行。**跨进程**写入时：`save_plan` 的“目标冻结检查 + 写入”在
+  `BEGIN IMMEDIATE` 的同一事务里完成（两个进程不可能都通过冻结检查；同一 run 的整张计划仍是最后
+  写入者胜出，因为一个 run 只应有一个控制进程，靠执行租约保证）。工具审批/提问同一时刻只弹出一个
+  （其余子任务排队等待）。
 - 验收规则按类型：analyze 需要执行成功 + 至少一次工具调用；modify 需要文件变更证据，且验证命令
   不能只有失败；verify 需要通过的命令/检查证据。
 - 持久化（SQLite）：`run_plans`（`plan_version`、整张任务图 JSON、冻结的 `goal_json`）、
@@ -191,7 +199,9 @@ flowchart LR
   `attempt+1` 并用检查点幂等恢复（记录 `crash_recovery` 干预）。
 - **人工接管**（任务暂停时）：可修改未成功子任务的契约（改标题等是非结构性的；改依赖/描述/
   验收标准/类型/风险是结构性的 → 新版本 + diff 写入 history + 回到计划审批），或人工标记结果
-  （说明 + 证据文本），在证据与图中都标为 `manual`。
+  （说明 + 证据文本），在证据与图中都标为 `manual`。人工声明“实际改动的文件”（`files`）时，
+  服务端会先核验该文件确实存在于运行工作区并计算内容哈希，核验失败返回 400；核验通过的哈希
+  与执行器文件证据同等参与最终验收的哈希一致性检查。
 - 每个子任务记录尝试次数/重试、干预、耗时、token 及估算费用（`TOKEN_PRICE_*`），并汇总到整次运行。
 - `PLANNER_ENABLED=false` 时退化为“单子任务”模式，与 v0.2.0 的执行行为一致。
 
@@ -206,7 +216,7 @@ flowchart LR
 | POST | `/runs/{id}/plan/approve` | `{"decision":"approve","subtasks":[...可选，编辑后的剩余子任务]}` 或 `{"decision":"reject","feedback":"..."}`（兼容 `{"approved":true}`） |
 | POST | `/runs/{id}/subtasks/{sid}/confirm` | 高风险子任务执行前确认：`{"approved":true|false,"note":"..."}`，拒绝即跳过 |
 | PATCH | `/runs/{id}/subtasks/{sid}` | 暂停时修改子任务契约（可改 `write_scope`、`serves_clauses`；结构性修改会升版本并回到计划审批，非结构性记一个新修订；同样经过静态检查） |
-| POST | `/runs/{id}/subtasks/{sid}/manual-result` | 人工标记结果：`{"status":"done|failed|skipped","note":"...","evidence_text":"..."}` |
+| POST | `/runs/{id}/subtasks/{sid}/manual-result` | 人工标记结果：`{"status":"done|failed|skipped","note":"...","evidence_text":"...","files":["a.py"]}`（`files` 需真实存在，服务端核验并记录哈希） |
 | POST | `/runs/{id}/resume` | 从 `needs_attention` / `interrupted` / `failed` 继续 |
 | POST | `/runs/{id}/cancel` | 取消任务 |
 

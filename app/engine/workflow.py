@@ -342,6 +342,17 @@ class SubtaskRecorder:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
+    def _owns_current_attempt(self) -> bool:
+        """True while this attempt still owns the subtask's execution lease.
+
+        A takeover bumps the attempt number and installs a new lease. From that
+        moment this recorder belongs to a superseded attempt: anything it writes
+        (conversation state, run status) is a late result and must not touch the
+        newer attempt's state. Read paths (tool steps) are still recorded, since
+        the work really happened and the step carries its attempt number.
+        """
+        return P.lease_matches(self._store.get_lease(self._sid), self._sid, self._attempt)
+
     def heartbeat(self, state: str | None = None) -> None:
         with self._ctx.lease_lock:
             lease = self._store.get_lease(self._sid)
@@ -374,6 +385,10 @@ class SubtaskRecorder:
         if self._legacy:
             self._inner.set_status(status, summary=summary, error=error)
             return
+        if not self._owns_current_attempt():
+            # A superseded attempt ending must not overwrite the status the
+            # newer attempt (or a terminal run state) already published.
+            return
         if status in (agent_executor.STATUS_SUCCEEDED, agent_executor.STATUS_FAILED,
                       agent_executor.STATUS_CANCELLED, agent_executor.STATUS_RUNNING):
             # A subtask ending is not the run ending; and while a sibling waits
@@ -389,14 +404,21 @@ class SubtaskRecorder:
     def set_state(self, state: dict[str, Any]) -> None:
         stats = state.get("token_stats")
         if isinstance(stats, dict):
+            # Token spend is real even for a superseded attempt, so keep
+            # accounting for it before deciding whether the state may persist.
             self.token_stats = dict(stats)
             self._ctx.set_live_tokens(self._sid, _tokens_from(stats)["total"])
+        if self._legacy:
+            self._inner.set_state(state)
+            return
+        if not self._owns_current_attempt():
+            # Never persist a superseded conversation: the next resume would
+            # replay the old attempt's messages instead of the newer one's.
+            return
         # runs.state keeps the latest writer (diagnostics / pre-0.3.1 resume);
         # the authoritative, parallel-safe resume state is kept per subtask so
         # two subtasks never replay each other's conversation.
         self._inner.set_state(state)
-        if self._legacy:
-            return
         self.exec_state.update(state)
         self._store.save_exec_state(self._sid, self.exec_state)
 
@@ -921,6 +943,42 @@ def _collect(state: WorkflowState, launch: Launch, outcome: Any, elapsed: float)
     ctx = state["ctx"]
     sub = P.find_subtask(plan, launch.subtask_id)
     assert sub is not None
+    current_attempt = int(sub.get("attempt_number") or 0)
+    if int(launch.attempt or 0) != current_attempt:
+        # A late result from a *superseded* attempt (e.g. another runner took the
+        # lease over and bumped the attempt while this one was still in flight)
+        # must never overwrite the newer attempt's status, evidence, attempts log
+        # or completion stamp. Discard the result, but still count the real work
+        # it consumed against the run budget.
+        totals = plan.setdefault("totals", {"steps": 0, "active_seconds": 0.0, "tokens": 0})
+        totals["steps"] = int(totals.get("steps") or 0) + int(outcome.iterations or 0)
+        ctx.finish(launch.subtask_id, totals)
+        with ctx.lease_lock:
+            # Only release OUR lease: if a newer attempt already installed its
+            # own lease, that row must survive untouched.
+            held = store.get_lease(launch.subtask_id)
+            if (isinstance(held, dict)
+                    and held.get("lease_id") == (launch.lease or {}).get("lease_id")):
+                store.set_lease(dict(launch.lease, state="released", heartbeat_at=utc_now()))
+        _step(state, "subtask",
+              f"子任务 [{launch.subtask_id}] 第 {launch.attempt} 次尝试的迟到结果已丢弃"
+              f"（当前已是第 {current_attempt} 次尝试，其状态/证据保持不变）",
+              status="stale", subtask_id=launch.subtask_id,
+              args={"attempt": launch.attempt, "superseded_by": current_attempt})
+        # Deliberately NO full-plan save here: this process's in-memory plan may
+        # predate the takeover, and a whole-plan write is last-writer-wins. The
+        # takeover owner either is this process (whose live plan object is
+        # already current) or another process (whose newer plan must survive).
+        return {
+            "route": "next",
+            "launch": [],
+            "attempts": int(state.get("attempts") or 0) + 1,
+            "iterations": int(state.get("iterations") or 0) + outcome.iterations,
+            "tool_calls": int(state.get("tool_calls") or 0) + outcome.tool_calls,
+            "tool_successes": int(state.get("tool_successes") or 0) + outcome.tool_successes,
+            "tool_failures": int(state.get("tool_failures") or 0) + outcome.tool_failures,
+            "stop_reason": outcome.stop_reason,
+        }
     wrapped = launch.recorder
     tokens = _tokens_from(wrapped.token_stats)
     log = [a for a in sub.get("attempts_log", []) if a.get("attempt") != sub["attempt_number"]]
@@ -1181,7 +1239,47 @@ _FINAL_PROMPT = """你是最终验收器。只判断“各子任务的合并结�
 只输出 JSON：{"achieved": true|false, "missing_clauses": [], "inconsistencies": []}"""
 
 
-def _final_rule_checks(state: WorkflowState) -> tuple[list[str], list[str]]:
+# Completion-ordering modes for the final "modification must be followed by a
+# passing verification" rule. New plans always carry a monotonic
+# ``finished_seq``; plans created before that field existed may only have
+# wall-clock timestamps, or nothing at all.
+ORDER_SEQUENCE = "finished_seq"      # authoritative: stamped at completion time
+ORDER_TIMESTAMPS = "finished_at"     # degraded: legacy entries without a sequence
+ORDER_PLAN = "plan_order"            # last resort: no ordering evidence at all
+
+_ORDERING_NOTES = {
+    ORDER_TIMESTAMPS: (
+        "最终验收顺序：部分历史子任务缺少完成序号（finished_seq），"
+        "已整体退化为按完成时间戳排序（时间戳相同的按计划顺序）。"
+    ),
+    ORDER_PLAN: (
+        "最终验收顺序：历史子任务既没有完成序号也没有完成时间，"
+        "已退化为计划顺序；因此“最后一次修改之后是否有通过的验证”只能按静态顺序判断。"
+    ),
+}
+
+
+def _completion_order(subs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    """Order subtasks by real completion, plus the mode that was used.
+
+    The mode is all-or-nothing on purpose: mixing ``finished_seq`` with legacy
+    entries would sort every legacy entry as if it finished first and invert the
+    real timeline. A partial timeline is no better, so the fallback chain is
+    authoritative sequence → wall-clock timestamps → static plan order.
+    """
+    if subs and all(s.get("finished_seq") is not None for s in subs):
+        return sorted(
+            subs,
+            key=lambda s: (int(s["finished_seq"]), s.get("finished_at") or ""),
+        ), ORDER_SEQUENCE
+    if subs and all(s.get("finished_at") for s in subs):
+        return sorted(subs, key=lambda s: str(s["finished_at"])), ORDER_TIMESTAMPS
+    return list(subs), ORDER_PLAN
+
+
+def _final_rule_checks(
+    state: WorkflowState, notes: list[str] | None = None,
+) -> tuple[list[str], list[str]]:
     from app.write_guard import content_hash
 
     plan = state["plan"]
@@ -1214,14 +1312,12 @@ def _final_rule_checks(state: WorkflowState) -> tuple[list[str], list[str]]:
         if disk != digest:
             inconsistent.append(f"文件 {path} 的当前内容与子任务 {sid} 记录的证据不一致（之后被改动）。")
     # A modification must be followed by a passing verification somewhere later.
-    # Order by actual completion order (monotonic ``finished_seq``, with the
-    # wall-clock ``finished_at`` as a tie-break), NOT the static plan list order:
-    # parallel subtasks finish in scheduler order, so the list order does not
-    # reflect when a file was last modified relative to a verification.
-    ordered_subs = sorted(
-        subs,
-        key=lambda s: (int(s.get("finished_seq") or 0), s.get("finished_at") or ""),
-    )
+    # Order by actual completion order, NOT the static plan list order: parallel
+    # subtasks finish in scheduler order, so the list order does not reflect when
+    # a file was last modified relative to a verification.
+    ordered_subs, ordering = _completion_order(subs)
+    if notes is not None and ordering in _ORDERING_NOTES:
+        notes.append(_ORDERING_NOTES[ordering])
     seen_mod = False
     verified_after = True
     for s in ordered_subs:
@@ -1241,14 +1337,14 @@ def final_verify_node(state: WorkflowState) -> dict[str, Any]:
         sub = plan["subtasks"][0]
         return {"route": "finish", "status": agent_executor.STATUS_SUCCEEDED,
                 "summary": state.get("summary") or sub.get("result_summary", ""), "error": None}
-    missing, inconsistent = _final_rule_checks(state)
+    notes: list[str] = []
+    missing, inconsistent = _final_rule_checks(state, notes=notes)
     clauses = P.clause_report(plan)
     for c in clauses:
         if c["status"] == "missing":
             missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」没有被任何子任务覆盖。")
         elif c["status"] == "planned":
             missing.append(f"目标条款 {c['id']}「{c['text'][:80]}」仅有计划覆盖，缺少验收证据。")
-    notes: list[str] = []
     if config.FINAL_VERIFY_LLM and config.PLANNER_ENABLED and not missing:
         payload = []
         for s in plan["subtasks"]:
