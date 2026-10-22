@@ -1,0 +1,1274 @@
+{
+  "goal": "评估受保护文件（如 .env）在读取工具和规划概览中是否都被正确排除",
+  "task_type": "analysis",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "核查读取/列举工具对受保护文件的排除",
+      "description": "只读分析（不修改任何文件、不执行外部命令）：确认 read_file / list_files 在路径解析与内容返回前是否调用 is_protected_file（及 _protected_basenames）拦截 .env 等受保护文件，并确认拦截发生在读取内容之前。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已定位 _read_file 与 is_protected_file 调用点 | 期望:给出 read_file 是否在读取内容前拒绝受保护文件、list_files 是否过滤受保护文件的结论，并附代码行号 | 测试:pytest tests/test_reading_budget.py -q | 边界:路径大小写/相对路径变体（如 ./.env）是否同样被拦截"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/tools/registry.py",
+          "symbol": "_read_file",
+          "reason": "读取工具入口，需确认受保护文件在读取内容前被拒绝",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/tools/registry.py",
+          "symbol": "_list_files",
+          "reason": "列举工具可能暴露受保护文件名，需确认是否过滤",
+          "evidence_ref": "EV61",
+          "evidence_id": "EV61",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/tools/security.py",
+          "symbol": "is_protected_file",
+          "reason": "受保护文件判定的唯一权威实现",
+          "evidence_ref": "EV20",
+          "evidence_id": "EV20",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/tools/security.py",
+          "symbol": "_protected_basenames",
+          "reason": "受保护文件名集合，决定 .env 是否命中",
+          "evidence_ref": "EV24",
+          "evidence_id": "EV24",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "核查规划概览与 grounding 对受保护文件的排除",
+      "description": "只读分析（不修改任何文件、不执行外部命令）：确认 build_project_overview、build_grounding、repo_index._is_protected、build_grounding_pack 在生成规划概览/证据包时是否跳过受保护文件，避免 .env 内容进入模型上下文。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已定位上述四个符号 | 期望:逐项给出是否排除受保护文件的结论与代码行号，并指出与 security.is_protected_file 判定是否一致 | 测试:pytest tests/test_plan_traceability.py -q | 边界:repo_index 与 security 两套判定对 .env.example 等相似名是否一致"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "reason": "规划概览生成入口，需确认受保护文件被排除",
+          "evidence_ref": "EV21",
+          "evidence_id": "EV21",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "reason": "grounding 生成入口，需确认不引用受保护文件",
+          "evidence_ref": "EV22",
+          "evidence_id": "EV22",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/repo_index.py",
+          "symbol": "_is_protected",
+          "reason": "仓库索引层的受保护判定，需确认与 security 判定一致",
+          "evidence_ref": "EV23",
+          "evidence_id": "EV23",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/context.py",
+          "symbol": "build_grounding_pack",
+          "reason": "证据包构建，需确认过滤受保护文件",
+          "evidence_ref": "EV25",
+          "evidence_id": "EV25",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "汇总 C1 评估结论与缺口",
+      "description": "只读汇总（不修改任何文件、不执行外部命令）：基于子任务 1、2 的结论，输出 C1 的评估报告——读取工具与规划概览是否都正确排除受保护文件，列出不一致点/缺口及建议的验证命令。",
+      "depends_on": [
+        "1",
+        "2"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:子任务 1、2 已完成 | 期望:输出 C1 结论：读取工具与规划概览是否均排除受保护文件；若有缺口给出文件/符号/行号与建议验证命令 | 测试:pytest tests/test_reading_budget.py tests/test_plan_traceability.py -q | 边界:两处判定不一致时明确标注为缺口而非通过"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/tools/security.py",
+          "symbol": "is_protected_file",
+          "reason": "作为判定基准对照两处调用方",
+          "evidence_ref": "EV20",
+          "evidence_id": "EV20",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "reason": "作为规划概览侧对照点",
+          "evidence_ref": "EV21",
+          "evidence_id": "EV21",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/tools/registry.py",
+      "role": "read",
+      "reason": "读取/列举工具实现，核查受保护文件排除",
+      "evidence_id": "EV2"
+    },
+    {
+      "path": "app/tools/security.py",
+      "role": "read",
+      "reason": "受保护文件判定权威实现",
+      "evidence_id": "EV20"
+    },
+    {
+      "path": "app/engine/planning.py",
+      "role": "read",
+      "reason": "规划概览与 grounding 生成",
+      "evidence_id": "EV21"
+    },
+    {
+      "path": "app/planner/repo_index.py",
+      "role": "read",
+      "reason": "索引层受保护判定",
+      "evidence_id": "EV23"
+    },
+    {
+      "path": "app/planner/context.py",
+      "role": "read",
+      "reason": "证据包构建过滤",
+      "evidence_id": "EV25"
+    },
+    {
+      "path": "app/tools/base.py",
+      "role": "not-needed",
+      "reason": "Tool/ToolContext 仅承载调用上下文，不参与受保护文件判定，本次评估无需改动或深入",
+      "evidence_id": "EV5"
+    },
+    {
+      "path": "app/tools/command_policy.py",
+      "role": "not-needed",
+      "reason": "命令环境过滤与受保护文件读取/概览排除无关",
+      "evidence_id": "EV11"
+    },
+    {
+      "path": "app/main.py",
+      "role": "not-needed",
+      "reason": "API 路由层不实现受保护文件判定，仅透传计划版本",
+      "evidence_id": "EV14"
+    },
+    {
+      "path": "app/project_context.py",
+      "role": "not-needed",
+      "reason": "文件缓存层不承担受保护判定，判定在 security/registry 层完成",
+      "evidence_id": "EV17"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/tools/security.py",
+      "symbol": "resolve_workspace_path",
+      "kind": "definition",
+      "line_start": 22,
+      "line_end": 49,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/tools/registry.py",
+      "symbol": "_read_file",
+      "kind": "definition",
+      "line_start": 118,
+      "line_end": 230,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/tools/registry.py",
+      "symbol": "_edit_file",
+      "kind": "definition",
+      "line_start": 482,
+      "line_end": 576,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/tools/registry.py",
+      "symbol": "_is_text_file",
+      "kind": "definition",
+      "line_start": 42,
+      "line_end": 48,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/tools/base.py",
+      "symbol": "Tool",
+      "kind": "definition",
+      "line_start": 103,
+      "line_end": 122,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/tools/base.py",
+      "symbol": "ReadTracker",
+      "kind": "definition",
+      "line_start": 13,
+      "line_end": 63,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/tools/base.py",
+      "symbol": "ToolContext",
+      "kind": "definition",
+      "line_start": 67,
+      "line_end": 99,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/engine/planning.py",
+      "symbol": "PlanError",
+      "kind": "definition",
+      "line_start": 117,
+      "line_end": 118,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/engine/planning.py",
+      "symbol": "PlanSpec",
+      "kind": "definition",
+      "line_start": 238,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/engine/planning.py",
+      "symbol": "new_plan_record",
+      "kind": "definition",
+      "line_start": 596,
+      "line_end": 638,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "app/tools/command_policy.py",
+      "symbol": "filter_model_env",
+      "kind": "definition",
+      "line_start": 981,
+      "line_end": 990,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "app/tools/command_policy.py",
+      "symbol": "sanitize_inherited_env",
+      "kind": "definition",
+      "line_start": 973,
+      "line_end": 978,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "app/tools/command_policy.py",
+      "symbol": "_validate_test_target",
+      "kind": "definition",
+      "line_start": 395,
+      "line_end": 417,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "app/main.py",
+      "symbol": "list_plan_versions",
+      "kind": "definition",
+      "line_start": 616,
+      "line_end": 623,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "app/main.py",
+      "symbol": "get_plan_version",
+      "kind": "definition",
+      "line_start": 627,
+      "line_end": 633,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "app/main.py",
+      "symbol": "_plan_or_404",
+      "kind": "definition",
+      "line_start": 348,
+      "line_end": 352,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext.get_file",
+      "kind": "definition",
+      "line_start": 237,
+      "line_end": 270,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext.put_file",
+      "kind": "definition",
+      "line_start": 272,
+      "line_end": 288,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "app/project_context.py",
+      "symbol": "FileEntry",
+      "kind": "definition",
+      "line_start": 58,
+      "line_end": 65,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "app/tools/security.py",
+      "symbol": "is_protected_file",
+      "kind": "definition",
+      "line_start": 148,
+      "line_end": 162,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "app/engine/planning.py",
+      "symbol": "build_project_overview",
+      "kind": "definition",
+      "line_start": 1573,
+      "line_end": 1616,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounding",
+      "kind": "definition",
+      "line_start": 1992,
+      "line_end": 2003,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "app/planner/repo_index.py",
+      "symbol": "_is_protected",
+      "kind": "definition",
+      "line_start": 53,
+      "line_end": 56,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "app/tools/security.py",
+      "symbol": "_protected_basenames",
+      "kind": "definition",
+      "line_start": 143,
+      "line_end": 145,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "app/planner/context.py",
+      "symbol": "build_grounding_pack",
+      "kind": "definition",
+      "line_start": 137,
+      "line_end": 193,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_approval_flow.py",
+      "symbol": "test_approved_protected_write_executes_once",
+      "kind": "test",
+      "line_start": 42,
+      "line_end": 55,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_approval_flow.py",
+      "symbol": "test_unapproved_protected_write_does_not_execute",
+      "kind": "test",
+      "line_start": 58,
+      "line_end": 70,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/test_auth.py",
+      "symbol": "test_protected_endpoints_require_token",
+      "kind": "test",
+      "line_start": 42,
+      "line_end": 51,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_agent_executor.py",
+      "symbol": "test_tool_timeout_fails",
+      "kind": "test",
+      "line_start": 364,
+      "line_end": 384,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_agent_executor.py",
+      "symbol": "test_approved_mutating_command_records_mutation_not_verification",
+      "kind": "test",
+      "line_start": 408,
+      "line_end": 438,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_agent_executor.py",
+      "symbol": "test_unexpected_exception_in_requires_approval_propagates",
+      "kind": "test",
+      "line_start": 500,
+      "line_end": 522,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_tool_timeout.py",
+      "symbol": "test_hung_handler_returns_at_timeout",
+      "kind": "test",
+      "line_start": 13,
+      "line_end": 30,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "tests/test_tool_timeout.py",
+      "symbol": "test_handler_exception_is_reported",
+      "kind": "test",
+      "line_start": 33,
+      "line_end": 49,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "tests/test_tool_timeout.py",
+      "symbol": "test_outer_wait_covers_command_timeout",
+      "kind": "test",
+      "line_start": 66,
+      "line_end": 91,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "tests/test_reading_budget.py",
+      "symbol": "test_read_file_detects_duplicate_read",
+      "kind": "test",
+      "line_start": 75,
+      "line_end": 88,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "tests/test_reading_budget.py",
+      "symbol": "test_read_file_chunks_cover_whole_file_without_rereading",
+      "kind": "test",
+      "line_start": 91,
+      "line_end": 114,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "tests/test_write_guard.py",
+      "symbol": "test_stale_write_after_external_edit_is_refused",
+      "kind": "test",
+      "line_start": 193,
+      "line_end": 207,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "tests/test_write_guard.py",
+      "symbol": "test_multiple_edits_to_one_file_all_succeed",
+      "kind": "test",
+      "line_start": 249,
+      "line_end": 264,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_pytest_script_bypass_does_not_execute",
+      "kind": "test",
+      "line_start": 69,
+      "line_end": 81,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "tests/test_edge_034.py",
+      "symbol": "test_run_command_always_scratch_when_scoped",
+      "kind": "test",
+      "line_start": 162,
+      "line_end": 179,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_readonly_subtask_refuses_write_command_before_start",
+      "kind": "test",
+      "line_start": 159,
+      "line_end": 174,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_cancel_kills_running_command",
+      "kind": "test",
+      "line_start": 187,
+      "line_end": 215,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "tests/test_edge_036.py",
+      "symbol": "test_readonly_refuses_networky_without_approval",
+      "kind": "test",
+      "line_start": 64,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "tests/test_edit_tool.py",
+      "symbol": "_call",
+      "kind": "test",
+      "line_start": 11,
+      "line_end": 20,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "tests/test_acceptance_gaps.py",
+      "symbol": "_manual_plan",
+      "kind": "test",
+      "line_start": 73,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "tests/test_acceptance_gaps.py",
+      "symbol": "test_clause_report_distinguishes_planned_from_verified",
+      "kind": "test",
+      "line_start": 110,
+      "line_end": 130,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "tests/test_acceptance_gaps.py",
+      "symbol": "test_next_finish_seq_is_monotonic_and_survives_plan_reload",
+      "kind": "test",
+      "line_start": 174,
+      "line_end": 189,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "tests/test_acceptance_gaps.py",
+      "symbol": "test_final_verify_orders_by_finished_seq_not_timestamp",
+      "kind": "test",
+      "line_start": 192,
+      "line_end": 221,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "_done_plan",
+      "kind": "test",
+      "line_start": 45,
+      "line_end": 55,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "tests/test_parallel.py",
+      "symbol": "_approved_plan",
+      "kind": "test",
+      "line_start": 82,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_clause_report_marks_missing_when_serving_subtask_not_accepted",
+      "kind": "test",
+      "line_start": 161,
+      "line_end": 177,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_model_env_cannot_inject_pytest_plugins_or_path",
+      "kind": "test",
+      "line_start": 250,
+      "line_end": 261,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV53",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_inherited_env_is_sanitized_but_path_survives",
+      "kind": "test",
+      "line_start": 264,
+      "line_end": 277,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV54",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+      "kind": "test",
+      "line_start": 195,
+      "line_end": 220,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV55",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_structural_replan_creates_new_version_with_parent",
+      "kind": "test",
+      "line_start": 223,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV56",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_rejection_records_new_version_keeping_clauses",
+      "kind": "test",
+      "line_start": 242,
+      "line_end": 258,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV57",
+      "path": "tests/test_edit_tool.py",
+      "symbol": "test_edit_file_updates_project_cache",
+      "kind": "test",
+      "line_start": 112,
+      "line_end": 132,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV58",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_repeated_read_hits_cache",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 81,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV59",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_modified_file_invalidates_cache",
+      "kind": "test",
+      "line_start": 104,
+      "line_end": 113,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV60",
+      "path": "tests/conftest.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 61,
+      "line_end": 61,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV61",
+      "path": "app/tools/registry.py",
+      "symbol": "_list_files",
+      "kind": "definition",
+      "line_start": 75,
+      "line_end": 115,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.75
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "核查读取/列举工具对受保护文件的排除",
+      "kind": "analyze",
+      "files": [
+        "app/tools/registry.py",
+        "app/tools/security.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/tools/registry.py",
+          "symbol": "_read_file",
+          "line": 118,
+          "reason": "读取工具入口，需确认受保护文件在读取内容前被拒绝",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/tools/registry.py",
+          "symbol": "_list_files",
+          "line": 75,
+          "reason": "列举工具可能暴露受保护文件名，需确认是否过滤",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/tools/security.py",
+          "symbol": "is_protected_file",
+          "line": 148,
+          "reason": "受保护文件判定的唯一权威实现",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/tools/security.py",
+          "symbol": "_protected_basenames",
+          "line": 143,
+          "reason": "受保护文件名集合，决定 .env 是否命中",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/tools/registry.py",
+          "symbol": "_read_file",
+          "lines": "118-230",
+          "text": "118| def _read_file(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:\n119|     try:\n120|         path = security.resolve_workspace_path(args.get(\"path\", \"\"), ctx.workspace_path)\n121|         if not path.exists():\n122|             # The file was deleted or renamed externally: drop any cached\n123|             # content/index for that path so nothing can be served from it.\n124|             if ctx.project is not None:\n125|                 try:\n126|                     rel_missing = path.relative_to(Path(ctx.workspace_path).resolve()).as_posix()\n127|                     ctx.project.invalidate(rel_missing)\n128|                 except ValueError:\n129|                     pass\n130|             return tool_error(f\"文件不存在：{path}\")"
+        },
+        {
+          "path": "app/tools/registry.py",
+          "symbol": "_list_files",
+          "lines": "75-115",
+          "text": "75| def _list_files(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:\n76|     try:\n77|         path = security.resolve_workspace_path(args.get(\"path\", \".\"), ctx.workspace_path)\n78|         if not path.exists():\n79|             return tool_error(f\"路径不存在：{path}\")\n80|         if not path.is_dir():\n81|             return tool_error(f\"不是目录：{path}\")\n82|         recursive = bool(args.get(\"recursive\", False))\n83|         max_entries = int(args.get(\"max_entries\", 200))\n84|         rel_root = path.relative_to(ctx.workspace_path)\n85| \n86|         if ctx.project is not None:\n87|             # Cached listing (memoized until the next file mutation)."
+        },
+        {
+          "path": "app/tools/security.py",
+          "symbol": "is_protected_file",
+          "lines": "148-162",
+          "text": "148| def is_protected_file(\n149|     path: str | os.PathLike[str],\n150|     workspace: str | os.PathLike[str] | None = None,\n151| ) -> bool:\n152|     \"\"\"Return True for files that must not be overwritten without approval.\n153| \n154|     Protection is by *filename* (case-insensitive) at any directory depth, so\n155|     ``.env``, ``.env.local``, ``.env.production`` and the configured database\n156|     file are protected wherever they appear. Files that merely contain \"env\" in\n157|     their name (e.g. ``environment.py``) are NOT matched. Paths that escape the\n158|     workspace raise :class:`SecurityError` (fail-closed) via\n159|     :func:`resolve_workspace_path`.\n160|     \"\"\""
+        }
+      ],
+      "test_command": "pytest tests/test_reading_budget.py -q",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已定位 _read_file 与 is_protected_file 调用点 | 期望:给出 read_file 是否在读取内容前拒绝受保护文件、list_files 是否过滤受保护文件的结论，并附代码行号 | 测试:pytest tests/test_reading_budget.py -q | 边界:路径大小写/相对路径变体（如 ./.env）是否同样被拦截"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "核查规划概览与 grounding 对受保护文件的排除",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/planner/repo_index.py",
+        "app/planner/context.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "line": 1573,
+          "reason": "规划概览生成入口，需确认受保护文件被排除",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "line": 1992,
+          "reason": "grounding 生成入口，需确认不引用受保护文件",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/repo_index.py",
+          "symbol": "_is_protected",
+          "line": 53,
+          "reason": "仓库索引层的受保护判定，需确认与 security 判定一致",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/context.py",
+          "symbol": "build_grounding_pack",
+          "line": 137,
+          "reason": "证据包构建，需确认过滤受保护文件",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "lines": "1573-1616",
+          "text": "1573| def build_project_overview(workspace: str | Path | None, max_chars: int | None = None) -> str:\n1574|     limit = max_chars if max_chars is not None else config.PLANNER_OVERVIEW_MAX_CHARS\n1575|     try:\n1576|         root = resolve_workspace_root(\n1577|             workspace if workspace is not None else config.WORKSPACE_PATH\n1578|         )\n1579|     except SecurityError:\n1580|         return \"\"\n1581|     lines: list[str] = [f\"工作区：{root}\", \"目录结构（最多两层）：\"]\n1582|     try:\n1583|         entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))\n1584|     except OSError:\n1585|         entries = []"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "lines": "1992-2003",
+          "text": "1992| def build_grounding(goal: str, workspace: str | Path | None,\n1993|                     max_chars: int | None = None) -> dict[str, Any] | None:\n1994|     \"\"\"Return the grounding pack dict, or None when disabled / failed.\"\"\"\n1995|     if not config.PLANNER_GROUNDING:\n1996|         return None\n1997|     try:\n1998|         from app.planner.context import build_grounding_pack\n1999|         root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)\n2000|         limit = max_chars if max_chars is not None else config.PLANNER_CONTEXT_MAX_CHARS\n2001|         return build_grounding_pack(goal, root, max_chars=limit)\n2002|     except Exception:  # noqa: BLE001 — grounding is best-effort; fall back to overview\n2003|         return None"
+        },
+        {
+          "path": "app/planner/repo_index.py",
+          "symbol": "_is_protected",
+          "lines": "53-56",
+          "text": "53| def _is_protected(name: str) -> bool:\n54|     low = name.lower()\n55|     return low in PROTECTED_NAMES or (low.startswith(\".env\") and low != \".env.example\") \\\n56|         or low.endswith((\".pem\", \".key\"))"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py -q",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已定位上述四个符号 | 期望:逐项给出是否排除受保护文件的结论与代码行号，并指出与 security.is_protected_file 判定是否一致 | 测试:pytest tests/test_plan_traceability.py -q | 边界:repo_index 与 security 两套判定对 .env.example 等相似名是否一致"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "汇总 C1 评估结论与缺口",
+      "kind": "analyze",
+      "files": [
+        "app/tools/security.py",
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/tools/security.py",
+          "symbol": "is_protected_file",
+          "line": 148,
+          "reason": "作为判定基准对照两处调用方",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "line": 1573,
+          "reason": "作为规划概览侧对照点",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/tools/security.py",
+          "symbol": "is_protected_file",
+          "lines": "148-162",
+          "text": "148| def is_protected_file(\n149|     path: str | os.PathLike[str],\n150|     workspace: str | os.PathLike[str] | None = None,\n151| ) -> bool:\n152|     \"\"\"Return True for files that must not be overwritten without approval.\n153| \n154|     Protection is by *filename* (case-insensitive) at any directory depth, so\n155|     ``.env``, ``.env.local``, ``.env.production`` and the configured database\n156|     file are protected wherever they appear. Files that merely contain \"env\" in\n157|     their name (e.g. ``environment.py``) are NOT matched. Paths that escape the\n158|     workspace raise :class:`SecurityError` (fail-closed) via\n159|     :func:`resolve_workspace_path`.\n160|     \"\"\""
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "lines": "1573-1616",
+          "text": "1573| def build_project_overview(workspace: str | Path | None, max_chars: int | None = None) -> str:\n1574|     limit = max_chars if max_chars is not None else config.PLANNER_OVERVIEW_MAX_CHARS\n1575|     try:\n1576|         root = resolve_workspace_root(\n1577|             workspace if workspace is not None else config.WORKSPACE_PATH\n1578|         )\n1579|     except SecurityError:\n1580|         return \"\"\n1581|     lines: list[str] = [f\"工作区：{root}\", \"目录结构（最多两层）：\"]\n1582|     try:\n1583|         entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))\n1584|     except OSError:\n1585|         entries = []"
+        }
+      ],
+      "test_command": "pytest tests/test_reading_budget.py tests/test_plan_traceability.py -q",
+      "depends_on": [
+        "1",
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:子任务 1、2 已完成 | 期望:输出 C1 结论：读取工具与规划概览是否均排除受保护文件；若有缺口给出文件/符号/行号与建议验证命令 | 测试:pytest tests/test_reading_budget.py tests/test_plan_traceability.py -q | 边界:两处判定不一致时明确标注为缺口而非通过"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1的targets引用了EV61（app/tools/registry.py:_list_files），但证据登记表中不存在EV61，违反“每个target必须带证据登记表中存在的evidence_id”规则。",
+      "子任务1的targets中_list_files的symbol无法由任何已登记证据确认存在（status=confirmed要求symbol真实存在且有证据支撑），属于因名字相似/推测选符号。",
+      "顶层缺少coverage字段，未给每个证据文件指定角色，违反“revised必须同时给出coverage”与“顶层coverage必须给每个证据文件指定角色”规则。",
+      "子任务3的targets与子任务1/2重复引用同一符号（is_protected_file、build_project_overview），汇总步骤无需重复targets，且analysis步骤数虽在3以内但存在冗余targets。",
+      "子任务1的验收标准测试目标pytest tests/test_reading_budget.py与“受保护文件排除”无直接对应测试证据，test_target与expected_behavior关联性弱。",
+      "子任务2验收标准引用tests/test_plan_traceability.py，但该测试与受保护文件排除无证据关联，test_target不匹配。",
+      "子任务1描述提及list_files但证据登记表无该符号证据，需求超出可验证证据范围。"
+    ],
+    "revised_coverage": [
+      {
+        "evidence_id": "EV2",
+        "path": "app/tools/registry.py",
+        "symbol": "_read_file",
+        "role": "读取工具入口，核查受保护文件拦截点"
+      },
+      {
+        "evidence_id": "EV20",
+        "path": "app/tools/security.py",
+        "symbol": "is_protected_file",
+        "role": "受保护文件判定权威实现，作为基准"
+      },
+      {
+        "evidence_id": "EV24",
+        "path": "app/tools/security.py",
+        "symbol": "_protected_basenames",
+        "role": "受保护文件名集合，决定 .env 命中"
+      },
+      {
+        "evidence_id": "EV21",
+        "path": "app/engine/planning.py",
+        "symbol": "build_project_overview",
+        "role": "规划概览生成入口，核查排除"
+      },
+      {
+        "evidence_id": "EV22",
+        "path": "app/engine/planning.py",
+        "symbol": "build_grounding",
+        "role": "grounding 生成入口，核查排除"
+      },
+      {
+        "evidence_id": "EV23",
+        "path": "app/planner/repo_index.py",
+        "symbol": "_is_protected",
+        "role": "仓库索引层受保护判定，核查与 security 一致性"
+      },
+      {
+        "evidence_id": "EV25",
+        "path": "app/planner/context.py",
+        "symbol": "build_grounding_pack",
+        "role": "证据包构建，核查过滤"
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "证据绑定失败：子任务 3（analysis）缺少带证据的关键 target；coverage app/tools/security.py 角色「受保护文件名集合，决定 .env 命中」无效；coverage app/tools/registry.py 角色「读取工具入口，核查受保护文件拦截点」无效；coverage 缺少证据文件 app/tools/base.py 的角色；coverage app/engine/planning.py 角色「grounding 生成入口，核查排除」无效；coverage 缺少证据文件 app/tools/command_policy.py 的角色；coverage 缺少证据文件 app/main.py 的角色；coverage 缺少证据文件 app/project_context.py 的角色；coverage app/planner/repo_index.py 角色「仓库索引层受保护判定，核查与 security 一致性」无效；coverage app/planner/context.py 角色「证据包构建，核查过滤」无效"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/main.py",
+      "app/planner/repo_index.py",
+      "app/project_context.py",
+      "app/tools/base.py",
+      "app/tools/command_policy.py",
+      "app/tools/registry.py",
+      "app/tools/security.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:PlanError",
+      "app/engine/planning.py:PlanSpec",
+      "app/engine/planning.py:build_grounding",
+      "app/engine/planning.py:build_project_overview",
+      "app/engine/planning.py:new_plan_record",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/planner/repo_index.py:PROTECTED",
+      "app/planner/repo_index.py:PROTECTED_NAMES",
+      "app/planner/repo_index.py:protected",
+      "app/project_context.py:FileEntry",
+      "app/project_context.py:ProjectContext.get_file",
+      "app/project_context.py:ProjectContext.put_file",
+      "app/project_context.py:get_file",
+      "app/project_context.py:put_file"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 49
+      },
+      {
+        "tool": "search_symbol",
+        "args": {
+          "query": "resolve_workspace_path"
+        },
+        "chars": 163
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": ".env",
+          "limit": 20
+        },
+        "chars": 1876
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/tools/security.py",
+          "symbol": "resolve_workspace_path",
+          "max_lines": 40
+        },
+        "chars": 1479
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/planner/repo_index.py",
+          "symbol": "PROTECTED_NAMES",
+          "max_lines": 30
+        },
+        "chars": 355
+      }
+    ],
+    "extra_round": {
+      "wanted": [
+        "_read_file",
+        "is_protected_file",
+        "_protected_basenames",
+        "_list_files",
+        "build_project_overview",
+        "build_grounding",
+        "_is_protected",
+        "build_grounding_pack"
+      ],
+      "new_ids": [
+        "EV61"
+      ]
+    }
+  },
+  "errors": [
+    "子任务 1 涉及删除/外部副作用/配置变更，但风险等级为 low；请标记 risk=medium/high（不可逆时 reversible=false 且 risk=high）。",
+    "证据绑定失败：子任务 1 target app/tools/registry.py:_read_file 缺少 evidence_id；子任务 1 target app/tools/security.py:is_protected_file 缺少 evidence_id；子任务 1 target app/tools/security.py:_protected_basenames 缺少 evidence_id；子任务 1 target app/tools/registry.py:_list_files 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_project_overview 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_grounding 缺少 evidence_id；子任务 2 target app/planner/repo_index.py:_is_protected 缺少 evidence_id；子任务 2 target app/planner/context.py:build_grounding_pack 缺少 evidence_id；子任务 3 target app/tools/security.py:is_protected_file 缺少 evidence_id；子任务 3 target app/engine/planning.py:build_project_overview 缺少 evidence_id",
+    "证据绑定失败：子任务 1 target app/tools/registry.py:_list_files 与证据 EV2（app/tools/registry.py:_read_file）不一致；coverage 缺少证据文件 app/tools/base.py 的角色；coverage 缺少证据文件 app/tools/command_policy.py 的角色；coverage 缺少证据文件 app/main.py 的角色；coverage 缺少证据文件 app/project_context.py 的角色",
+    "子任务 1 涉及删除/外部副作用/配置变更，但风险等级为 low；请标记 risk=medium/high（不可逆时 reversible=false 且 risk=high）。"
+  ],
+  "usage": {
+    "prompt_tokens": 46088,
+    "completion_tokens": 9428,
+    "total_tokens": 55516
+  },
+  "cost_usd": 0.016864
+}

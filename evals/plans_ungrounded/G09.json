@@ -1,0 +1,92 @@
+{
+  "goal": "最终验收失败时，把失败条款和对应子任务写入失败报告，扩展 build_failure_report 和 clause_report",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位失败报告与条款报告实现",
+      "description": "只读分析 app/ 下 build_failure_report 与 clause_report 的现有实现（重点 app/engine/、app/planner/、app/schemas.py、app/storage.py），确认最终验收失败时的数据流：失败条款（clause id/文本/状态）与对应子任务（subtask id/title）当前是否被记录、在何处丢失、报告结构（dict/pydantic 模型）与持久化/API 返回路径。同时查看 tests/ 中相关测试（如 test_acceptance_gaps.py、test_delivery_integrity.py）了解既有断言风格。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出 build_failure_report 与 clause_report 的定义文件与行号",
+        "说明最终验收失败时失败条款与子任务映射的现有数据来源与缺口",
+        "列出需要修改的文件清单及受影响的现有测试"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "扩展报告数据结构与生成逻辑",
+      "description": "修改 app/ 中 build_failure_report 与 clause_report 的实现（及必要的 schemas.py 模型），使最终验收失败时报告包含失败条款列表，每条含 clause 编号/文本/失败原因，以及对应子任务 id/title/状态；保持向后兼容（新增字段可选默认空）。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "build_failure_report 输出包含失败条款及其对应子任务字段",
+        "clause_report 对失败条款标注关联子任务",
+        "无失败条款时输出结构仍合法且旧字段不变"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/schemas.py",
+        "app/engine/**",
+        "app/planner/**"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充失败报告单元测试",
+      "description": "在 tests/ 新增或扩展测试，构造最终验收失败场景（含多个失败条款与对应子任务），断言 build_failure_report 与 clause_report 输出包含失败条款与子任务映射；覆盖无失败与部分失败两种情形。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖失败条款→子任务映射断言",
+        "覆盖无失败条款的兼容性断言"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_*.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查",
+      "description": "运行 pytest 相关测试文件与 ruff 检查，确认修改未破坏既有行为。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 相关测试全部通过",
+        "ruff 检查无新增错误"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

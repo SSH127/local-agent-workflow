@@ -1,0 +1,95 @@
+{
+  "goal": "并行执行时 launchable_subtasks 可能同时启动 write_scope 重叠的子任务，修复并加并发测试",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析 launchable_subtasks 与调度器的并发缺陷",
+      "description": "只读分析 app/engine/planning.py 的 launchable_subtasks（L757 起）与 app/engine/workflow.py 中 pick_next_node（L709）、_start_subtask（L808）的调用链，确认 write_scope 重叠判定是否只针对 in_flight 与同批次已选节点，是否遗漏了「已 launch 但尚未进入 in_flight」的窗口（例如 Launch 对象已创建、线程尚未登记 in_flight），以及 scopes_overlap 对空 scope/None 的处理。同时阅读 tests/test_parallel.py 现有用例（test_launchable_respects_in_flight_and_unscoped_nodes、test_overlapping_scopes_are_serialized）确认当前覆盖缺口。产出：缺陷根因说明 + 需要修改的函数清单 + 需要新增的并发测试场景清单。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确指出 launchable_subtasks 在哪个时间窗口会同时返回 write_scope 重叠的子任务（引用具体行号与变量）",
+        "列出需要修改的函数（文件:符号）与需要新增的测试场景，且不修改任何文件"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 launchable_subtasks 的重叠调度",
+      "description": "修改 app/engine/planning.py 的 launchable_subtasks：把「本批次已选」与「in_flight」合并为统一的占用集合，并支持调用方传入已 launch 但尚未登记 in_flight 的子任务 id（新增可选参数，如 reserved/launching，保持向后兼容）；对每个候选按 scopes_overlap 与占用集合逐一比对，重叠则跳过并继续尝试后续候选（而非直接截断），确保同一批次返回的子任务两两 write_scope 不重叠。必要时同步调整 app/engine/workflow.py 的 pick_next_node/_start_subtask 传入该参数。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "launchable_subtasks 返回的任意两个子任务 write_scope 互不重叠（含空 scope 视为与任何 scope 冲突的保守处理与原有语义一致）",
+        "新增参数为可选，现有调用方与 tests/test_parallel.py 既有用例签名不受破坏",
+        "重叠候选被跳过时仍能继续选取后续不冲突的候选，容量被充分利用"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py"
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "新增并发调度回归测试",
+      "description": "在 tests/test_parallel.py 中新增并发测试：构造多个 write_scope 重叠与不重叠混合的子任务，并发调用 launchable_subtasks（多线程）断言任意批次内无重叠；并新增一个端到端并发用例，验证重叠子任务被串行化、不重叠子任务并行执行且计数器精确。复用现有 par/planner_on/Tracker fixture。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试在修复前会失败、修复后通过（至少一个用例能复现重叠启动）",
+        "测试覆盖：同批次重叠被排除、多线程并发调用下无重叠、重叠子任务串行执行",
+        "测试不依赖真实网络与真实 LLM"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_parallel.py"
+      ],
+      "serves_clauses": [
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行并行与写入范围相关测试验证",
+      "description": "运行 pytest tests/test_parallel.py tests/test_write_scope.py tests/test_edge_034.py tests/test_edge_035.py tests/test_edge_036.py，确认修复与新增测试全部通过且无回归；如失败则定位并反馈。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "上述 pytest 命令退出码为 0",
+        "tests/test_parallel.py 中新增的并发用例全部通过",
+        "无既有并行/写入范围用例被跳过或标记 xfail"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

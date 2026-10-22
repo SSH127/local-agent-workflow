@@ -1,0 +1,494 @@
+{
+  "goal": "把 build_project_overview 和 build_grounding 合并为统一的规划上下文构建入口，保持 workflow 行为不变",
+  "task_type": "refactor",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "梳理两个入口的调用链与行为契约",
+      "description": "阅读 app/engine/planning.py 中 build_project_overview(L1572-1615)、build_grounding(L1971-1982)、build_grounded_planner_messages(L1985) 与 build_planner_messages(L1676-1705)，确认 overview 与 grounding 的输入（workspace/goal/max_chars）、失败降级语义（SecurityError 返回空串、grounding 异常返回 None、PLANNER_GROUNDING 开关）以及下游如何拼接进消息。同时确认 app/planner/context.py:build_grounding_pack 的签名与返回类型，以及 tests 中覆盖这些入口的用例（tests/test_workflow.py、tests/test_eval_plans_gates.py 等）。产出：统一入口的签名草案与行为等价清单，供后续 modify 直接照做。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读上述四个符号与 build_grounding_pack 定义 | 期望:输出统一入口签名（含 workspace/goal/max_chars/开关）与逐条行为等价清单，明确 overview 为空串、grounding 为 None 时的返回形态 | 测试:（analyze 无测试，人工核对 app/engine/planning.py L1572-L1615 与 L1971-L1985） | 边界:PLANNER_GROUNDING=False、workspace 触发 SecurityError、build_grounding_pack 抛异常三种降级路径均需列出"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "reason": "待合并的入口之一，需确认其降级与截断语义",
+          "evidence_ref": "E1 L1572-L1615",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "reason": "待合并的入口之二，需确认开关与异常降级",
+          "evidence_ref": "E3 L1971-L1982",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "唯一调用方，合并后需保持其行为不变",
+          "evidence_ref": "E2/E4 L1985",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_planner_messages",
+          "reason": "消费 overview/grounding 字符串，确认拼接格式不变",
+          "evidence_ref": "E5 L1676-L1705",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新增统一规划上下文构建入口",
+      "description": "在 app/engine/planning.py 中新增统一入口（如 build_planning_context(goal, workspace, max_chars=None) -> dict），内部复用现有 build_project_overview 与 build_grounding 的实现逻辑，返回同时包含 overview 与 grounding 的结构；保持两者原有的开关、截断上限（PLANNER_OVERVIEW_MAX_CHARS / PLANNER_CONTEXT_MAX_CHARS）与降级语义完全一致。不删除旧函数，避免破坏 app/planner/explore.py、app/planner/quality.py 的导入。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:调用新入口 build_planning_context(goal, workspace) 且 PLANNER_GROUNDING 为默认值 | 期望:返回 dict 中 overview 与直接调用 build_project_overview 的结果逐字符相同，grounding 与直接调用 build_grounding 的结果相同 | 测试:pytest tests/test_workflow.py -k planner | 边界:workspace 不存在或越界时 overview 为空串、grounding 为 None，且不抛异常"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "reason": "统一入口需复用其目录概览生成逻辑与 SecurityError 降级",
+          "evidence_ref": "E1 L1572-L1615",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "reason": "统一入口需复用其开关判断与 best-effort 降级",
+          "evidence_ref": "E3 L1971-L1982",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "让 build_grounded_planner_messages 改走统一入口",
+      "description": "修改 app/engine/planning.py:build_grounded_planner_messages(L1985)，把分别调用 build_project_overview 与 build_grounding 的两处替换为一次 build_planning_context 调用，再按原有顺序把 overview/grounding 传给 build_planner_messages。保持消息内容、phase2 分支与异常处理路径不变，确保 workflow 行为不变。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:对同一 goal/workspace 分别用改动前后代码生成 planner messages | 期望:两次生成的 messages 列表内容完全一致（含 grounding 前缀拼接与 phase2 分支） | 测试:pytest tests/test_workflow.py | 边界:grounding 为 None 时不出现多余空行前缀；overview 为空串时消息结构仍合法"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "唯一同时调用两个入口的函数，改为调用统一入口",
+          "evidence_ref": "E2/E4 L1985",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_planner_messages",
+          "reason": "确认传入的 overview/grounding 参数形态未变",
+          "evidence_ref": "E5 L1676-L1705",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充统一入口的回归测试",
+      "description": "在 tests/ 下新增或扩展测试，覆盖 build_planning_context 与 build_grounded_planner_messages 的等价性：overview 与旧函数一致、grounding 开关关闭时为 None、workspace 越界时降级不抛异常、消息内容与旧路径一致。若 tests/test_workflow.py 已有相关用例则在其内追加，否则新建 tests/test_planning_context.py（父目录 tests/ 已存在）。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:构造临时 workspace 并设置 PLANNER_GROUNDING 开/关两种配置 | 期望:统一入口返回的 overview/grounding 与旧函数逐一相等；build_grounded_planner_messages 输出与改动前快照一致 | 测试:pytest tests/test_workflow.py -k planning_context | 边界:workspace 指向不存在路径时返回空 overview 与 None grounding，不抛 SecurityError"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_workflow.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "测试需断言其输出与统一入口一致",
+          "evidence_ref": "E2/E4 L1985",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "全量回归验证 workflow 行为不变",
+      "description": "运行与规划/工作流相关的测试集，确认合并后无回归：tests/test_workflow.py、tests/test_eval_plans_gates.py、tests/test_plan_traceability.py、tests/test_task_graph.py，并跑 ruff 检查 app/engine/planning.py。若失败则回到子任务 2/3 修正。",
+      "depends_on": [
+        "3",
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已完成子任务 2-4 的代码与测试改动 | 期望:下列测试全部通过且 ruff 无新增告警 | 测试:pytest tests/test_workflow.py tests/test_eval_plans_gates.py tests/test_plan_traceability.py tests/test_task_graph.py | 边界:并行执行与重规划相关用例（test_task_graph.py 中 cancel/replan 场景）仍通过，证明 workflow 行为未变"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "验证改动后调用链行为不变",
+          "evidence_ref": "E2/E4 L1985",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "梳理两个入口的调用链与行为契约",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "line": 1572,
+          "reason": "待合并的入口之一，需确认其降级与截断语义",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "line": 1971,
+          "reason": "待合并的入口之二，需确认开关与异常降级",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 1985,
+          "reason": "唯一调用方，合并后需保持其行为不变",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_planner_messages",
+          "line": 1676,
+          "reason": "消费 overview/grounding 字符串，确认拼接格式不变",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "lines": "1572-1615",
+          "text": "1572| def build_project_overview(workspace: str | Path | None, max_chars: int | None = None) -> str:\n1573|     limit = max_chars if max_chars is not None else config.PLANNER_OVERVIEW_MAX_CHARS\n1574|     try:\n1575|         root = resolve_workspace_root(\n1576|             workspace if workspace is not None else config.WORKSPACE_PATH\n1577|         )\n1578|     except SecurityError:\n1579|         return \"\"\n1580|     lines: list[str] = [f\"工作区：{root}\", \"目录结构（最多两层）：\"]\n1581|     try:\n1582|         entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))\n1583|     except OSError:\n1584|         entries = []"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "lines": "1971-1982",
+          "text": "1971| def build_grounding(goal: str, workspace: str | Path | None,\n1972|                     max_chars: int | None = None) -> dict[str, Any] | None:\n1973|     \"\"\"Return the grounding pack dict, or None when disabled / failed.\"\"\"\n1974|     if not config.PLANNER_GROUNDING:\n1975|         return None\n1976|     try:\n1977|         from app.planner.context import build_grounding_pack\n1978|         root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)\n1979|         limit = max_chars if max_chars is not None else config.PLANNER_CONTEXT_MAX_CHARS\n1980|         return build_grounding_pack(goal, root, max_chars=limit)\n1981|     except Exception:  # noqa: BLE001 — grounding is best-effort; fall back to overview\n1982|         return None"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "1985-2013",
+          "text": "1985| def build_grounded_planner_messages(\n1986|     goal: str, workspace: str | Path | None, max_subtasks: int,\n1987|     clauses: list[dict[str, str]] | None = None,\n1988|     *,\n1989|     phase2: bool = False,\n1990|     explore_text: str | None = None,\n1991| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n1992|     overview = build_project_overview(workspace)\n1993|     pack = build_grounding(goal, workspace)\n1994|     ground = None\n1995|     if explore_text:\n1996|         # Prefer explored evidence; keep a short keyword pack as appendix.\n1997|         extra = (pack or {}).get(\"text\") or \"\""
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读上述四个符号与 build_grounding_pack 定义 | 期望:输出统一入口签名（含 workspace/goal/max_chars/开关）与逐条行为等价清单，明确 overview 为空串、grounding 为 None 时的返回形态 | 测试:（analyze 无测试，人工核对 app/engine/planning.py L1572-L1615 与 L1971-L1985） | 边界:PLANNER_GROUNDING=False、workspace 触发 SecurityError、build_grounding_pack 抛异常三种降级路径均需列出"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "新增统一规划上下文构建入口",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "line": 1572,
+          "reason": "统一入口需复用其目录概览生成逻辑与 SecurityError 降级",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "line": 1971,
+          "reason": "统一入口需复用其开关判断与 best-effort 降级",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "lines": "1572-1615",
+          "text": "1572| def build_project_overview(workspace: str | Path | None, max_chars: int | None = None) -> str:\n1573|     limit = max_chars if max_chars is not None else config.PLANNER_OVERVIEW_MAX_CHARS\n1574|     try:\n1575|         root = resolve_workspace_root(\n1576|             workspace if workspace is not None else config.WORKSPACE_PATH\n1577|         )\n1578|     except SecurityError:\n1579|         return \"\"\n1580|     lines: list[str] = [f\"工作区：{root}\", \"目录结构（最多两层）：\"]\n1581|     try:\n1582|         entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))\n1583|     except OSError:\n1584|         entries = []"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "lines": "1971-1982",
+          "text": "1971| def build_grounding(goal: str, workspace: str | Path | None,\n1972|                     max_chars: int | None = None) -> dict[str, Any] | None:\n1973|     \"\"\"Return the grounding pack dict, or None when disabled / failed.\"\"\"\n1974|     if not config.PLANNER_GROUNDING:\n1975|         return None\n1976|     try:\n1977|         from app.planner.context import build_grounding_pack\n1978|         root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)\n1979|         limit = max_chars if max_chars is not None else config.PLANNER_CONTEXT_MAX_CHARS\n1980|         return build_grounding_pack(goal, root, max_chars=limit)\n1981|     except Exception:  # noqa: BLE001 — grounding is best-effort; fall back to overview\n1982|         return None"
+        }
+      ],
+      "test_command": "pytest tests/test_workflow.py -k planner",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:调用新入口 build_planning_context(goal, workspace) 且 PLANNER_GROUNDING 为默认值 | 期望:返回 dict 中 overview 与直接调用 build_project_overview 的结果逐字符相同，grounding 与直接调用 build_grounding 的结果相同 | 测试:pytest tests/test_workflow.py -k planner | 边界:workspace 不存在或越界时 overview 为空串、grounding 为 None，且不抛异常"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "让 build_grounded_planner_messages 改走统一入口",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 1985,
+          "reason": "唯一同时调用两个入口的函数，改为调用统一入口",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_planner_messages",
+          "line": 1676,
+          "reason": "确认传入的 overview/grounding 参数形态未变",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "1985-2013",
+          "text": "1985| def build_grounded_planner_messages(\n1986|     goal: str, workspace: str | Path | None, max_subtasks: int,\n1987|     clauses: list[dict[str, str]] | None = None,\n1988|     *,\n1989|     phase2: bool = False,\n1990|     explore_text: str | None = None,\n1991| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n1992|     overview = build_project_overview(workspace)\n1993|     pack = build_grounding(goal, workspace)\n1994|     ground = None\n1995|     if explore_text:\n1996|         # Prefer explored evidence; keep a short keyword pack as appendix.\n1997|         extra = (pack or {}).get(\"text\") or \"\""
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_planner_messages",
+          "lines": "1676-1705",
+          "text": "1676| def build_planner_messages(\n1677|     goal: str, overview: str, max_subtasks: int,\n1678|     clauses: list[dict[str, str]] | None = None,\n1679|     grounding: str | None = None,\n1680|     *,\n1681|     phase2: bool = False,\n1682| ) -> list[dict[str, Any]]:\n1683|     ground = f\"{grounding}\\n\\n\" if grounding else \"\"\n1684|     if phase2:\n1685|         from app.planner.quality import (\n1686|             PHASE2_SCHEMA_HINT, PHASE2_SYSTEM_PROMPT, classify_task_type,\n1687|         )\n1688|         ttype = classify_task_type(goal)"
+        }
+      ],
+      "test_command": "pytest tests/test_workflow.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:对同一 goal/workspace 分别用改动前后代码生成 planner messages | 期望:两次生成的 messages 列表内容完全一致（含 grounding 前缀拼接与 phase2 分支） | 测试:pytest tests/test_workflow.py | 边界:grounding 为 None 时不出现多余空行前缀；overview 为空串时消息结构仍合法"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "补充统一入口的回归测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_workflow.py",
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 1985,
+          "reason": "测试需断言其输出与统一入口一致",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "1985-2013",
+          "text": "1985| def build_grounded_planner_messages(\n1986|     goal: str, workspace: str | Path | None, max_subtasks: int,\n1987|     clauses: list[dict[str, str]] | None = None,\n1988|     *,\n1989|     phase2: bool = False,\n1990|     explore_text: str | None = None,\n1991| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n1992|     overview = build_project_overview(workspace)\n1993|     pack = build_grounding(goal, workspace)\n1994|     ground = None\n1995|     if explore_text:\n1996|         # Prefer explored evidence; keep a short keyword pack as appendix.\n1997|         extra = (pack or {}).get(\"text\") or \"\""
+        }
+      ],
+      "test_command": "pytest tests/test_workflow.py -k planning_context",
+      "depends_on": [
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:构造临时 workspace 并设置 PLANNER_GROUNDING 开/关两种配置 | 期望:统一入口返回的 overview/grounding 与旧函数逐一相等；build_grounded_planner_messages 输出与改动前快照一致 | 测试:pytest tests/test_workflow.py -k planning_context | 边界:workspace 指向不存在路径时返回空 overview 与 None grounding，不抛 SecurityError"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "全量回归验证 workflow 行为不变",
+      "kind": "verify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 1985,
+          "reason": "验证改动后调用链行为不变",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "1985-2013",
+          "text": "1985| def build_grounded_planner_messages(\n1986|     goal: str, workspace: str | Path | None, max_subtasks: int,\n1987|     clauses: list[dict[str, str]] | None = None,\n1988|     *,\n1989|     phase2: bool = False,\n1990|     explore_text: str | None = None,\n1991| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n1992|     overview = build_project_overview(workspace)\n1993|     pack = build_grounding(goal, workspace)\n1994|     ground = None\n1995|     if explore_text:\n1996|         # Prefer explored evidence; keep a short keyword pack as appendix.\n1997|         extra = (pack or {}).get(\"text\") or \"\""
+        }
+      ],
+      "test_command": "pytest tests/test_workflow.py tests/test_eval_plans_gates.py tests/test_plan_traceability.py tests/test_task_graph.py",
+      "depends_on": [
+        "3",
+        "4"
+      ],
+      "acceptance_criteria": [
+        "前提:已完成子任务 2-4 的代码与测试改动 | 期望:下列测试全部通过且 ruff 无新增告警 | 测试:pytest tests/test_workflow.py tests/test_eval_plans_gates.py tests/test_plan_traceability.py tests/test_task_graph.py | 边界:并行执行与重规划相关用例（test_task_graph.py 中 cancel/replan 场景）仍通过，证明 workflow 行为未变"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务4的 write_scope 为 tests/test_workflow.py，但证据中未出现该文件，且描述允许新建 tests/test_planning_context.py，与 write_scope 精确已存在路径的要求冲突；需明确单一已存在文件或标注 to-verify。",
+      "子任务4的 targets 只列了 app/engine/planning.py:build_grounded_planner_messages，未覆盖被测的新符号 build_planning_context（新建符号应在描述中标注新建，且不应作为 confirmed target）。",
+      "子任务2新增符号 build_planning_context 未在证据中出现，描述中应明确标注为新建符号，且不应在 targets 中以 confirmed 形式引用不存在的符号。",
+      "子任务3的验收标准要求“改动前后 messages 完全一致”，但缺少可执行的对照方式（快照或旧路径保留），edge_case 描述较笼统。",
+      "子任务5 verify 的 depends_on 包含 4，但子任务4若为新建测试文件则 verify 应依赖其确切路径；同时 verify 未覆盖子任务2新增入口的直接测试。",
+      "子任务1为 analyze 但 targets 中列了多个符号，属正常；但 acceptance_criteria 的 test_target 写成人工核对，未给出可执行检查点，建议明确 grep/阅读行号范围。",
+      "整体缺少对 app/planner/explore.py、app/planner/quality.py 导入兼容性的显式验证步骤（证据 E2/E4 提到 imported by），refactor 需保证不破坏这些导入。"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/planner/context.py",
+      "app/planner/quality.py",
+      "app/project_context.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:build_grounded_planner_messages",
+      "app/engine/planning.py:build_grounding",
+      "app/engine/planning.py:build_planner_messages",
+      "app/engine/planning.py:build_project_overview",
+      "app/engine/workflow.py:MemoryPlanStore",
+      "app/engine/workflow.py:StoragePlanStore",
+      "app/engine/workflow.py:_generate_specs",
+      "app/engine/workflow.py:build_grounded_planner_messages",
+      "app/engine/workflow.py:build_workflow",
+      "app/engine/workflow.py:workflow",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/planner/context.py:build_grounding_pack",
+      "app/planner/quality.py:build_handoff_packets",
+      "app/planner/quality.py:enforce_plan_quality"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 47
+      },
+      {
+        "tool": "search_symbol",
+        "args": {
+          "query": "build_grounded_planner_messages"
+        },
+        "chars": 177
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "build_grounded_planner_messages"
+        },
+        "chars": 647
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "max_lines": 40
+        },
+        "chars": 1534
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/workflow.py",
+          "symbol": "build_grounded_planner_messages",
+          "max_lines": 30
+        },
+        "chars": 568
+      }
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 13665,
+    "completion_tokens": 5054,
+    "total_tokens": 18719
+  },
+  "cost_usd": 0.005949
+}

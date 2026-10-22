@@ -1,0 +1,409 @@
+{
+  "goal": "规划器拆解任务时 write_scope 重叠检测对 glob 判断不准，修复 check_write_scopes 并补充测试",
+  "task_type": "bugfix",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 check_write_scopes 的 glob 重叠判定缺陷",
+      "description": "只读分析。阅读 app/engine/planning.py 中 check_write_scopes（L324-348）及其调用方 validate_subtasks（L241），确认当前重叠检测如何比较 write_scope 模式（字符串/前缀比较、是否展开 glob、是否处理 ** 与目录语义）。注意：探索证据 E1 仅展示 L324-334，重叠比较部分未在证据中出现，需在分析中标注为 to-verify 并实际读取源码确认。不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读 check_write_scopes 与 validate_subtasks 源码 | 期望:输出明确的缺陷说明：列出被误判为重叠/不重叠的 glob 组合（如 src/** 与 src/a.py、**/*.py 与 src/x.py、目录前缀与文件路径），并给出修复策略 | 测试:（分析任务，无测试执行） | 边界:覆盖 ** 中段/尾部、单文件精确路径、目录 glob 三类边界"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "reason": "待修复的重叠检测主体，需确认其 glob 比较逻辑缺陷",
+          "evidence_ref": "E1 L324-348",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "唯一调用方，需确认传入 specs/known_nodes 的形态与异常传播方式",
+          "evidence_ref": "E2 L241",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 check_write_scopes 的 glob 重叠判定",
+      "description": "在 app/engine/planning.py 中修改 check_write_scopes，使 write_scope 重叠检测基于规范化后的 glob 模式做语义比较；如需 helper 则在 planning.py 内新增私有函数（如 _scopes_overlap），不跨文件修改。保持函数签名与 PlanError 抛出语义不变，确保 validate_subtasks 既有行为（modify 必须声明 write_scope、重叠必须有依赖路径）不被破坏。若分析步骤确认可复用 app/write_scope.py 的既有函数，需在实现前将该文件加入 write_scope 并说明理由。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:两个无依赖关系的 modify 子任务，write_scope 分别为 [\"src/**\"] 与 [\"src/a.py\"] | 期望:check_write_scopes 判定为重叠并抛出 PlanError（提示需依赖路径） | 测试:pytest tests/test_planning_write_scope_glob.py::test_glob_dir_and_file_overlap_raises | 边界:** 尾部模式与具体文件路径的重叠",
+        "前提:两个无依赖关系的 modify 子任务，write_scope 分别为 [\"src/a.py\"] 与 [\"tests/test_a.py\"] | 期望:判定为不重叠，不抛异常 | 测试:pytest tests/test_planning_write_scope_glob.py::test_disjoint_scopes_pass | 边界:不同目录下同名文件不应误判重叠",
+        "前提:既有测试套件 | 期望:validate_subtasks 相关既有用例全部通过，无回归 | 测试:pytest tests/test_edge_034.py | 边界:modify 空 write_scope 仍抛 PlanError"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "reason": "修复 glob 重叠判定逻辑，改为规范化模式比较",
+          "evidence_ref": "E1 L324-348",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "调用方，需确认修复后异常与返回结构兼容",
+          "evidence_ref": "E2 L241",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充 glob 重叠检测单元测试",
+      "description": "新建 tests/test_planning_write_scope_glob.py（tests/ 目录已存在，证据中 tests/test_edge_034.py 可证）。针对 check_write_scopes 编写参数化用例：目录 glob 与文件路径重叠、** 中段/尾部模式、精确路径互斥、有依赖路径时不报错、modify 空 write_scope 报错。测试直接调用 app.engine.planning.check_write_scopes，断言 PlanError 抛出与否及消息要点。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:已实现修复后的 check_write_scopes | 期望:新增测试文件全部通过，覆盖重叠/不重叠/依赖豁免/空 scope 四类场景 | 测试:pytest tests/test_planning_write_scope_glob.py | 边界:** 中段模式（如 src/**/x.py）与具体路径的比较"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_planning_write_scope_glob.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_planning_write_scope_glob.py",
+          "symbol": "test_glob_dir_and_file_overlap_raises",
+          "reason": "新建测试文件中的测试函数，覆盖 glob 重叠核心场景",
+          "evidence_ref": "E1 L324-348",
+          "status": "to-verify"
+        },
+        {
+          "path": "tests/test_planning_write_scope_glob.py",
+          "symbol": "test_disjoint_scopes_pass",
+          "reason": "新建测试文件中的测试函数，覆盖不重叠场景",
+          "evidence_ref": "E1 L324-348",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "回归验证受影响调用链",
+      "description": "运行与 check_write_scopes 相关的既有测试，确认修复未破坏 validate_subtasks 及计划校验链路：tests/test_edge_034.py 与新增 tests/test_planning_write_scope_glob.py。仅执行测试命令，不修改任何文件、不改配置、不删除产物。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:子任务 2、3 已完成 | 期望:相关既有测试与新增测试全部通过，无回归失败 | 测试:pytest tests/test_edge_034.py tests/test_planning_write_scope_glob.py | 边界:modify 空 write_scope 与有依赖路径豁免两条既有分支仍按原语义工作"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "reason": "验证修复后调用链行为一致",
+          "evidence_ref": "E1 L324-348",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "验证调用方在修复后无回归",
+          "evidence_ref": "E2 L241",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 check_write_scopes 的 glob 重叠判定缺陷",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "line": 324,
+          "reason": "待修复的重叠检测主体，需确认其 glob 比较逻辑缺陷",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "唯一调用方，需确认传入 specs/known_nodes 的形态与异常传播方式",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "lines": "324-348",
+          "text": "324| def check_write_scopes(\n325|     specs: list[dict[str, Any]], known_nodes: list[dict[str, Any]] | None = None,\n326| ) -> None:\n327|     \"\"\"Static write-scope checks (see :func:`validate_subtasks`).\"\"\"\n328|     for s in specs:\n329|         if s.get(\"kind\") == \"modify\" and not s.get(\"write_scope\"):\n330|             raise PlanError(\n331|                 f\"子任务 {s['id']} 是修改类（modify），但 write_scope 为空；\"\n332|                 \"请列出它允许修改的文件/目录（相对工作区的路径或 glob）。\"\n333|             )\n334|     graph = {n[\"id\"]: list(n.get(\"depends_on\") or []) for n in (known_nodes or [])}\n335|     graph.update({s[\"id\"]: list(s.get(\"depends_on\") or []) for s in specs})\n336|     anc = _ancestors(graph)"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读 check_write_scopes 与 validate_subtasks 源码 | 期望:输出明确的缺陷说明：列出被误判为重叠/不重叠的 glob 组合（如 src/** 与 src/a.py、**/*.py 与 src/x.py、目录前缀与文件路径），并给出修复策略 | 测试:（分析任务，无测试执行） | 边界:覆盖 ** 中段/尾部、单文件精确路径、目录 glob 三类边界"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "修复 check_write_scopes 的 glob 重叠判定",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "line": 324,
+          "reason": "修复 glob 重叠判定逻辑，改为规范化模式比较",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "调用方，需确认修复后异常与返回结构兼容",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "lines": "324-348",
+          "text": "324| def check_write_scopes(\n325|     specs: list[dict[str, Any]], known_nodes: list[dict[str, Any]] | None = None,\n326| ) -> None:\n327|     \"\"\"Static write-scope checks (see :func:`validate_subtasks`).\"\"\"\n328|     for s in specs:\n329|         if s.get(\"kind\") == \"modify\" and not s.get(\"write_scope\"):\n330|             raise PlanError(\n331|                 f\"子任务 {s['id']} 是修改类（modify），但 write_scope 为空；\"\n332|                 \"请列出它允许修改的文件/目录（相对工作区的路径或 glob）。\"\n333|             )\n334|     graph = {n[\"id\"]: list(n.get(\"depends_on\") or []) for n in (known_nodes or [])}\n335|     graph.update({s[\"id\"]: list(s.get(\"depends_on\") or []) for s in specs})\n336|     anc = _ancestors(graph)"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": "pytest tests/test_planning_write_scope_glob.py::test_glob_dir_and_file_overlap_raises",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:两个无依赖关系的 modify 子任务，write_scope 分别为 [\"src/**\"] 与 [\"src/a.py\"] | 期望:check_write_scopes 判定为重叠并抛出 PlanError（提示需依赖路径） | 测试:pytest tests/test_planning_write_scope_glob.py::test_glob_dir_and_file_overlap_raises | 边界:** 尾部模式与具体文件路径的重叠",
+        "前提:两个无依赖关系的 modify 子任务，write_scope 分别为 [\"src/a.py\"] 与 [\"tests/test_a.py\"] | 期望:判定为不重叠，不抛异常 | 测试:pytest tests/test_planning_write_scope_glob.py::test_disjoint_scopes_pass | 边界:不同目录下同名文件不应误判重叠",
+        "前提:既有测试套件 | 期望:validate_subtasks 相关既有用例全部通过，无回归 | 测试:pytest tests/test_edge_034.py | 边界:modify 空 write_scope 仍抛 PlanError"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "补充 glob 重叠检测单元测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_planning_write_scope_glob.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_planning_write_scope_glob.py",
+          "symbol": "test_glob_dir_and_file_overlap_raises",
+          "line": null,
+          "reason": "新建测试文件中的测试函数，覆盖 glob 重叠核心场景",
+          "status": "to-verify"
+        },
+        {
+          "path": "tests/test_planning_write_scope_glob.py",
+          "symbol": "test_disjoint_scopes_pass",
+          "line": null,
+          "reason": "新建测试文件中的测试函数，覆盖不重叠场景",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [],
+      "test_command": "pytest tests/test_planning_write_scope_glob.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:已实现修复后的 check_write_scopes | 期望:新增测试文件全部通过，覆盖重叠/不重叠/依赖豁免/空 scope 四类场景 | 测试:pytest tests/test_planning_write_scope_glob.py | 边界:** 中段模式（如 src/**/x.py）与具体路径的比较"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "回归验证受影响调用链",
+      "kind": "verify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "line": 324,
+          "reason": "验证修复后调用链行为一致",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "验证调用方在修复后无回归",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "lines": "324-348",
+          "text": "324| def check_write_scopes(\n325|     specs: list[dict[str, Any]], known_nodes: list[dict[str, Any]] | None = None,\n326| ) -> None:\n327|     \"\"\"Static write-scope checks (see :func:`validate_subtasks`).\"\"\"\n328|     for s in specs:\n329|         if s.get(\"kind\") == \"modify\" and not s.get(\"write_scope\"):\n330|             raise PlanError(\n331|                 f\"子任务 {s['id']} 是修改类（modify），但 write_scope 为空；\"\n332|                 \"请列出它允许修改的文件/目录（相对工作区的路径或 glob）。\"\n333|             )\n334|     graph = {n[\"id\"]: list(n.get(\"depends_on\") or []) for n in (known_nodes or [])}\n335|     graph.update({s[\"id\"]: list(s.get(\"depends_on\") or []) for s in specs})\n336|     anc = _ancestors(graph)"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": "pytest tests/test_edge_034.py tests/test_planning_write_scope_glob.py",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:子任务 2、3 已完成 | 期望:相关既有测试与新增测试全部通过，无回归失败 | 测试:pytest tests/test_edge_034.py tests/test_planning_write_scope_glob.py | 边界:modify 空 write_scope 与有依赖路径豁免两条既有分支仍按原语义工作"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1（analyze）的 targets 引用了 app/write_scope.py::dir_in_scope（evidence_ref E11）与 ScopeError（E9），但探索证据中不存在 E9/E11，属于编造证据；且 status=confirmed 的符号无法由给定证据确认，应改为 to-verify 或移除。",
+      "子任务1 描述中引用 app/write_scope.py 的 normalize_pattern/ScopeError（L37-41）、dir_in_scope（L111-126）等具体行号，均无证据支撑，违反勿编造未出现符号的要求。",
+      "子任务2 描述要求复用 app/write_scope.py 的 normalize_pattern，但该符号未在证据中出现，且 write_scope 仅含 app/engine/planning.py，跨文件复用未在 write_scope 中体现，存在越界修改风险。",
+      "子任务3 为新建测试文件，write_scope 指向尚不存在的 tests/test_planning_write_scope_glob.py，虽描述中已标明新建，但 targets 中 status=to-verify 的符号为新建测试函数，应明确其为新建而非待验证既有符号；同时未确认 tests/ 目录存在（证据中仅出现 tests/test_edge_034.py，可推断 tests/ 存在，但应显式说明）。",
+      "子任务4（verify）depends_on 包含 2、3，符合要求；但验收标准中引用的 tests/test_planner_grounding.py 未在证据中出现，测试目标路径需标注为 to-verify 或改为证据中出现的测试文件（tests/test_edge_034.py）。",
+      "子任务2 验收标准中测试目标 tests/test_planning_write_scope_glob.py 在子任务3才创建，子任务2 单独执行时该测试不存在，验收标准与依赖顺序矛盾，应调整为先建测试或改为在子任务3后验证。",
+      "整体缺少对 check_write_scopes 现有重叠检测逻辑的明确缺陷证据（E1 仅展示 L324-334，未展示重叠比较部分），修复方案基于未证实的缺陷假设，需在分析步骤中明确标注 to-verify。"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/main.py",
+      "app/write_guard.py",
+      "app/write_scope.py",
+      "tests/test_plan_traceability.py",
+      "tests/test_write_scope.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:check_plan_grounding",
+      "app/engine/planning.py:check_write_scopes",
+      "app/engine/planning.py:migrate_legacy_write_scopes",
+      "app/main.py:get_run_plan",
+      "app/main.py:list_plan_versions",
+      "app/main.py:run_events",
+      "app/write_guard.py:WriteConflict",
+      "app/write_guard.py:WriteGuardError",
+      "app/write_guard.py:check_expected_version",
+      "app/write_scope.py:ScopeError",
+      "app/write_scope.py:WriteScope",
+      "app/write_scope.py:dir_in_scope",
+      "tests/test_plan_traceability.py:test_modify_with_empty_write_scope_rejected",
+      "tests/test_plan_traceability.py:test_scope_errors_twice_fall_back_to_single_subtask",
+      "tests/test_plan_traceability.py:test_scope_overlap_retries_planner_then_succeeds",
+      "tests/test_write_scope.py:test_executor_rejects_out_of_scope_write_without_asking"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 38
+      },
+      {
+        "tool": "search_symbol",
+        "args": {
+          "query": "write_scope",
+          "limit": 15
+        },
+        "chars": 619
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "check_write_scopes",
+          "limit": 20
+        },
+        "chars": 290
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "max_lines": 40
+        },
+        "chars": 1454
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "overlap",
+          "limit": 20
+        },
+        "chars": 1007
+      }
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 21019,
+    "completion_tokens": 5728,
+    "total_tokens": 26747
+  },
+  "cost_usd": 0.008291
+}

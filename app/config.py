@@ -225,6 +225,16 @@ MAX_SUBTASK_ATTEMPTS = int(os.getenv("MAX_SUBTASK_ATTEMPTS", "3"))
 # moved to needs_attention.
 MAX_PLAN_REJECTIONS = int(os.getenv("MAX_PLAN_REJECTIONS", "3"))
 PLANNER_OVERVIEW_MAX_CHARS = int(os.getenv("PLANNER_OVERVIEW_MAX_CHARS", "4000"))
+# Grounded planning: index the repo and feed goal-relevant files/symbols/snippets
+# (the "grounding pack") to the planner instead of only a shallow dir tree.
+PLANNER_GROUNDING = _bool_env("PLANNER_GROUNDING", "true")
+PLANNER_CONTEXT_MAX_CHARS = int(os.getenv("PLANNER_CONTEXT_MAX_CHARS", "12000"))
+# Phase-2 planner: reject broad write globs / missing symbols; optional critic round.
+PLANNER_STRICT = _bool_env("PLANNER_STRICT", "true")
+PLANNER_CRITIC = _bool_env("PLANNER_CRITIC", "true")
+# Explore-before-plan: bounded search/read/caller loop before drafting.
+PLANNER_EXPLORE = _bool_env("PLANNER_EXPLORE", "true")
+PLANNER_EXPLORE_BUDGET = int(os.getenv("PLANNER_EXPLORE_BUDGET", "6"))
 # LLM review of the combined result against the ORIGINAL goal in final verify.
 FINAL_VERIFY_LLM = _bool_env("FINAL_VERIFY_LLM", "true")
 # Per-subtask budgets (passed to the ReAct executor).

@@ -1,0 +1,119 @@
+{
+  "goal": "Add a PLANNER_MAX_DEPTH config that limits the dependency chain depth in validate_subtasks",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析 validate_subtasks 与配置模式",
+      "description": "只读分析 app/engine/planning.py 的 validate_subtasks（L202-262）及其调用方（request_subtasks、app/main.py:_validate_remaining、tests/test_plan_traceability.py、tests/test_parallel.py），以及 app/config.py 中现有环境变量配置模式（如 _bool_env/_csv_globs、MAX_* 常量）。确定深度计算方式（依赖链最长路径）、默认值、错误消息风格与需要更新的调用点。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出 validate_subtasks 的签名、现有校验项与错误消息格式",
+        "列出 app/config.py 中新增 int 环境变量配置的既有模式与命名约定",
+        "明确深度定义（最长依赖链节点数或边数）与默认值建议",
+        "列出所有需要传参/验证的调用方文件与行号"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新增 PLANNER_MAX_DEPTH 配置项",
+      "description": "在 app/config.py 中新增 PLANNER_MAX_DEPTH 配置（读取环境变量，带默认值与下限校验），并在 .env.example 中补充说明。属于配置变更，需谨慎并可回退。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "app/config.py 暴露 PLANNER_MAX_DEPTH（int，默认值合理，非法值回退或报错）",
+        ".env.example 含 PLANNER_MAX_DEPTH 条目及注释",
+        "python -c 'import app.config' 可正常导入"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/config.py",
+        ".env.example"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "在 validate_subtasks 中实现深度限制",
+      "description": "修改 app/engine/planning.py：在 validate_subtasks 中计算依赖链最大深度（基于 depends_on 的 DAG，含 known_nodes 合并场景），超过 PLANNER_MAX_DEPTH 时抛出 PlanError，错误消息沿用现有中文风格并指明超限子任务与深度。必要时新增参数 max_depth 以便测试注入。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "validate_subtasks 对超过 PLANNER_MAX_DEPTH 的计划抛出 PlanError",
+        "未超限计划行为不变（现有测试仍通过）",
+        "深度计算正确处理 known_nodes 与多依赖分支",
+        "错误消息包含限制值与实际深度"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充深度限制单元测试",
+      "description": "在 tests/ 下新增或扩展测试，覆盖：恰好等于上限通过、超过上限被拒、链式依赖与分叉依赖的深度计算、known_nodes 场景、配置默认值生效。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖等于/超过上限两种边界",
+        "覆盖链式与分叉依赖深度计算",
+        "测试可在无外部依赖下运行"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_plan_traceability.py",
+        "tests/test_planner_max_depth.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行测试与静态检查验证",
+      "description": "运行 pytest（至少 tests/test_plan_traceability.py、tests/test_parallel.py、新增深度测试及全量 tests/）与 ruff 检查，确认无回归。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 全量通过（或仅存在与本次改动无关的既有失败并已说明）",
+        "ruff check 无新增告警",
+        "深度限制相关测试全部通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

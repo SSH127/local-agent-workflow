@@ -579,18 +579,55 @@ def _generate_specs(
     ids = [c["id"] for c in clauses]
     if not config.PLANNER_ENABLED:
         return P.single_subtask_spec(goal, ids), "single", []
-    overview = P.build_project_overview(state.get("workspace"))
-    messages = P.build_planner_messages(goal, overview, config.MAX_SUBTASKS, clauses)
+    use_p2 = bool(getattr(config, "PLANNER_STRICT", False))
+    explore_text = None
+    if use_p2 and getattr(config, "PLANNER_EXPLORE", False):
+        try:
+            from app.planner.explore import explore_repo
+            from app.planner.quality import max_subtasks_for
+            # Seed+index explore only here (no tool-calling LLM): avoids breaking
+            # fake LLMs in tests and keeps decompose fast. try_plan.py does the
+            # full agentic explore loop.
+            er = explore_repo(
+                goal, state.get("workspace") or config.WORKSPACE_PATH,
+                llm=None,
+                budget=int(getattr(config, "PLANNER_EXPLORE_BUDGET", 6) or 6),
+            )
+            explore_text = er.text
+            state["explore_meta"] = {
+                "budget_used": er.budget_used, "done_reason": er.done_reason,
+                "key_files": er.key_files, "key_symbols": er.key_symbols,
+            }
+        except Exception as exc:  # noqa: BLE001
+            state["explore_meta"] = {"error": str(exc)[:200]}
+    # Do not apply task-type step caps here — try_plan.py does that. Live
+    # workflow keeps MAX_SUBTASKS so callers/tests that emit larger graphs still
+    # validate.
+    messages, _pack = P.build_grounded_planner_messages(
+        goal, state.get("workspace"), config.MAX_SUBTASKS, clauses,
+        phase2=use_p2, explore_text=explore_text)
     if feedback:
         messages[-1]["content"] += (
             "\n\n用户拒绝了上一版计划，反馈如下，请据此重新拆解：\n"
             + "\n".join(f"- {f}" for f in feedback[-5:])
         )
+    # Keep soft request_subtasks in the live workflow so existing runs/tests
+    # stay compatible; try_plan.py uses request_subtasks_phase2 + critic.
     specs, errors = P.request_subtasks(state["llm"], messages, config.MAX_SUBTASKS,
                                        clause_ids=ids, retries=1)
     if specs is None:
         return P.single_subtask_spec(goal, ids), "fallback", errors
+    state["grounding_warnings"] = P.check_plan_grounding(specs, state.get("workspace"))
     return specs, "llm", errors
+
+
+def _attach_grounding_warnings(state: Any, plan: dict[str, Any], source: str) -> None:
+    warnings = state.pop("grounding_warnings", None) if hasattr(state, "pop") else None
+    if source != "llm" or not warnings:
+        return
+    plan["grounding_warnings"] = list(warnings)[:20]
+    plan.setdefault("notes", []).append(
+        f"规划落地检查发现 {len(warnings)} 条警告（路径可能不存在）：" + "；".join(warnings[:5]))
 
 
 def decompose_node(state: WorkflowState) -> dict[str, Any]:
@@ -612,6 +649,7 @@ def decompose_node(state: WorkflowState) -> dict[str, Any]:
             notes=[f"规划输出无效，已回退为单子任务：{'; '.join(errors)}"] if source == "fallback" else [],
             goal=goal, goal_clauses=clauses,
         )
+        _attach_grounding_warnings(state, new, source)
         P.bump_version(new, plan)
         P.assign_lineage(plan.get("subtasks"), new["subtasks"], by_id=False)
         for key in ("plan_rejections", "feedback", "totals", "structural_replans", "rewrites", "final_verify_replans"):
@@ -644,6 +682,7 @@ def decompose_node(state: WorkflowState) -> dict[str, Any]:
             notes=[f"规划输出无效，已回退为单子任务：{'; '.join(errors)}"] if source == "fallback" else [],
             goal=state["goal"], goal_clauses=clauses,
         )
+        _attach_grounding_warnings(state, plan, source)
         P.assign_lineage(None, plan["subtasks"])
         state["plan"] = plan
         _save(state)

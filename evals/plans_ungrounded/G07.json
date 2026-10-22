@@ -1,0 +1,92 @@
+{
+  "goal": "把 planning.py 里租约相关函数 new_lease、lease_is_live、lease_matches 拆到独立模块 app/engine/leases.py，保留兼容导入",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位租约函数与调用点",
+      "description": "只读分析 app/engine/planning.py 中 new_lease、lease_is_live、lease_matches 的定义与依赖（导入、常量、类型），并全仓搜索这三个符号的所有引用点（app/、tests/、scripts/），确认是否存在循环导入风险与需要保留的兼容导入路径。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出三个函数的完整定义位置与行号",
+        "列出所有引用文件与导入形式（from app.engine.planning import ...）",
+        "确认新模块 app/engine/leases.py 所需的最小依赖集合，无循环导入"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "创建 app/engine/leases.py 并迁移函数",
+      "description": "新建 app/engine/leases.py，将 new_lease、lease_is_live、lease_matches 的实现原样迁入（保持签名与行为不变），补齐必要导入与 __all__。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "app/engine/leases.py 存在且定义三个函数，签名与原实现一致",
+        "模块可被 import 且无循环导入错误",
+        "文件内无未使用导入（ruff 通过）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/leases.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "planning.py 改为兼容再导出",
+      "description": "在 app/engine/planning.py 中删除三个函数的原实现，改为从 app.engine.leases 导入并再导出（from app.engine.leases import new_lease, lease_is_live, lease_matches），确保既有 from app.engine.planning import ... 的调用方不受影响。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "planning.py 中不再有这三个函数的 def",
+        "planning.py 中存在从 app.engine.leases 的导入且符号可访问",
+        "python -c \"from app.engine.planning import new_lease, lease_is_live, lease_matches\" 成功"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行测试与静态检查验证",
+      "description": "运行 pytest（至少覆盖租约/计划相关测试与全量测试）与 ruff check，确认拆分后行为不变、无导入错误。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 全量通过（或与拆分前基线一致，无新增失败）",
+        "ruff check app/engine/leases.py app/engine/planning.py 通过",
+        "from app.engine.leases import new_lease, lease_is_live, lease_matches 与 from app.engine.planning import 同名符号均可用"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

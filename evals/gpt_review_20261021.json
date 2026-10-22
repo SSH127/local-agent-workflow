@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-21",
+  "reviewer": "web GPT (external human-style review of baseline plans)",
+  "scale": "1-5 overall per goal",
+  "notes": "Human scores; grounded avg ~3.77/5, ungrounded ~2.94/5. Kept as reference for correlating the automated scorer.",
+  "grounded": {
+    "G01": 4.4, "G02": 4.4, "G03": 3.2, "G04": 3.0, "G05": 4.0,
+    "G06": 4.0, "G07": 3.8, "G08": 2.8, "G09": 4.0, "G10": 3.6
+  },
+  "ungrounded": {
+    "G01": 2.8, "G02": 3.0, "G03": 2.6, "G04": 3.4, "G05": 2.8,
+    "G06": 3.2, "G07": 3.6, "G08": 2.6, "G09": 2.8, "G10": 2.6
+  }
+}

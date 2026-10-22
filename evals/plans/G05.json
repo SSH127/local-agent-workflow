@@ -1,0 +1,92 @@
+{
+  "goal": "子任务超时后重试次数没有正确累加，检查 classify_failure 和 reset_subtask_for_retry 并修复",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位重试计数累加缺陷",
+      "description": "只读分析 app/engine/planning.py 中 classify_failure（L1364 起）与 reset_subtask_for_retry（L1459 起），以及 app/engine/workflow.py 中 verify_subtask_node（L1075 起）、_start_subtask/租约处对 attempt_number 的递增逻辑。确认超时（transient）分支下 attempt_number 是否被重置为 0 或未递增，导致重试次数不累加；同时核对 tests/test_task_graph.py:test_classify_failure_branches 的现有断言。产出：缺陷根因说明 + 需修改的具体行号与预期行为。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确指出 attempt_number 未正确累加的具体代码位置（文件+行号）与原因",
+        "列出受影响调用方：workflow.py:verify_subtask_node、tests/test_task_graph.py:test_classify_failure_branches",
+        "给出修复后期望语义：transient 重试时 attempt_number 单调递增且不超过预算"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 classify_failure 与 reset_subtask_for_retry",
+      "description": "在 app/engine/planning.py 中修复重试计数：reset_subtask_for_retry 保留/正确传递 attempt_number（不归零），classify_failure 基于当前 attempt_number 与预算正确判定 transient 与预算耗尽（structural）。必要时同步调整 app/engine/workflow.py 中租约处递增 attempt_number 的逻辑，确保只递增一次、不覆盖。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "reset_subtask_for_retry 返回的 attempt_number 不小于传入值，不再被重置为 0",
+        "classify_failure 在超时且预算未耗尽时返回 transient，预算耗尽时返回 structural",
+        "attempt_number 在每次重试中恰好 +1，无重复递增"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充/更新重试计数回归测试",
+      "description": "在 tests/test_task_graph.py 中更新 test_classify_failure_branches 并新增用例：模拟超时 outcome 连续重试，断言 attempt_number 依次为 1,2,3…；预算耗尽后分类为 structural；reset_subtask_for_retry 不清零计数。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖超时重试计数累加与预算耗尽两条路径",
+        "测试断言 attempt_number 单调递增且与预算比较正确"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_task_graph.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查",
+      "description": "运行 pytest tests/test_task_graph.py 及受影响的 workflow 相关测试（如 tests/test_execution_engine_repair.py、tests/test_agent_executor.py），并运行 ruff 检查 app/engine/planning.py 与 app/engine/workflow.py。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest tests/test_task_graph.py 全部通过",
+        "受影响测试文件无回归失败",
+        "ruff 对修改文件无新增告警"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

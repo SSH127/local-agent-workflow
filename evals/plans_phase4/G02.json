@@ -1,0 +1,1283 @@
+{
+  "goal": "Add a PLANNER_MAX_DEPTH config that limits the dependency chain depth in validate_subtasks",
+  "task_type": "feature",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析 validate_subtasks 与配置加载现状",
+      "description": "阅读 app/engine/planning.py:validate_subtasks 的依赖校验逻辑（EV1），确认当前是否已有深度限制；阅读 app/config.py 中现有 PLANNER_* 配置的读取方式（EV52 为文本证据，需确认具体符号），确定新增 PLANNER_MAX_DEPTH 的落点与默认值。同时确认 request_subtasks/request_subtasks_phase2 如何调用 validate_subtasks（EV33/EV34），以便后续传参。不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读 app/engine/planning.py:validate_subtasks 与 app/config.py 现有 PLANNER_* 配置 | 期望:产出结论：validate_subtasks 是否已有深度限制、PLANNER_MAX_DEPTH 应加在 config.py 的哪个位置、request_subtasks/request_subtasks_phase2 的调用点行号 | 测试:pytest tests/test_planner_phase2.py::test_classify_and_limits | 边界:若 config.py 中无 PLANNER_* 先例，需在结论中标注 to-verify 并说明替代读取方式"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "需要确认现有依赖链校验与 max_subtasks 参数形态，判断深度限制插入点",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "reason": "确认调用方如何构造 validate_subtasks 参数，后续需传入深度上限",
+          "evidence_ref": "EV33",
+          "evidence_id": "EV33",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "reason": "phase2 调用方同样需要传递深度上限",
+          "evidence_ref": "EV34",
+          "evidence_id": "EV34",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "在 validate_subtasks 中实施依赖链深度限制",
+      "description": "修改 app/engine/planning.py:validate_subtasks，新增可选参数 max_depth（默认读取 config.PLANNER_MAX_DEPTH），在构建依赖图后计算每条依赖链深度，超过上限时抛出 PlanError 并给出清晰错误信息。复用已有 _ancestors 或等价遍历，不改变现有 write_scope/clause 校验行为。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:构造依赖链长度超过 PLANNER_MAX_DEPTH 的 subtasks 列表 | 期望:validate_subtasks 抛出 PlanError，错误信息包含深度上限 | 测试:pytest tests/test_plan_traceability.py::test_overlapping_scopes_without_dependency_path_rejected | 边界:链长度恰好等于上限时应通过；无依赖的独立节点不受影响",
+        "前提:依赖链长度未超过上限的合法计划 | 期望:validate_subtasks 正常返回解析后的 subtasks 列表，行为与改动前一致 | 测试:pytest tests/test_plan_traceability.py::test_disjoint_scopes_need_no_dependency | 边界:循环依赖仍按原有逻辑报错，不被深度检查掩盖"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "在此函数内加入依赖链深度校验，读取 PLANNER_MAX_DEPTH",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "调用方传递深度上限",
+      "description": "更新 app/engine/planning.py 中 request_subtasks 与 request_subtasks_phase2 对 validate_subtasks 的调用，显式传入 max_depth=config.PLANNER_MAX_DEPTH（或依赖默认值），确保两条规划路径都受同一配置约束。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:通过 request_subtasks_phase2 生成超深依赖链的计划 | 期望:返回/抛出与 validate_subtasks 一致的深度超限错误 | 测试:pytest tests/test_planner_phase2.py::test_enforce_rejects_broad_glob | 边界:request_subtasks 与 request_subtasks_phase2 行为一致"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "reason": "调用 validate_subtasks 时需传入深度上限",
+          "evidence_ref": "EV33",
+          "evidence_id": "EV33",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "reason": "phase2 路径同样需传入深度上限",
+          "evidence_ref": "EV34",
+          "evidence_id": "EV34",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充深度限制回归测试",
+      "description": "在 tests/test_plan_traceability.py 中新增测试：超深依赖链被拒绝、恰好等于上限通过、独立节点不受影响。测试文件为已存在文件，仅追加用例。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:构造依赖链长度超过 PLANNER_MAX_DEPTH 的 subtasks 列表 | 期望:validate_subtasks 抛出 PlanError，错误信息包含深度上限 | 测试:pytest tests/test_plan_traceability.py::test_overlapping_scopes_without_dependency_path_rejected | 边界:链长度恰好等于上限时应通过；无依赖的独立节点不受影响"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_plan_traceability.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+          "reason": "在该测试文件追加深度限制用例，复用现有 validate_subtasks 调用风格",
+          "evidence_ref": "EV14",
+          "evidence_id": "EV14",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行相关测试验证",
+      "description": "运行深度限制相关测试与既有回归测试，确认新增配置与校验未破坏现有计划校验行为。",
+      "depends_on": [
+        "2",
+        "3",
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已完成子任务 2-4 的代码与测试修改 | 期望:pytest 相关用例全部通过，无回归 | 测试:pytest tests/test_plan_traceability.py tests/test_planner_phase2.py | 边界:若 PLANNER_MAX_DEPTH 默认值导致既有测试计划超限，需调整默认值或测试数据"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+          "reason": "验证新增深度限制用例通过",
+          "evidence_ref": "EV14",
+          "evidence_id": "EV14",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_planner_phase2.py",
+          "symbol": "test_classify_and_limits",
+          "reason": "验证既有计划限制逻辑未被破坏",
+          "evidence_ref": "EV18",
+          "evidence_id": "EV18",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/engine/planning.py",
+      "role": "modify",
+      "reason": "validate_subtasks 加入深度校验，request_subtasks/request_subtasks_phase2 传递上限",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "app/planner/quality.py",
+      "role": "not-needed",
+      "reason": "max_subtasks_for/enforce_plan_quality 处理子任务数量与质量，不涉及依赖链深度限制",
+      "evidence_id": "EV4"
+    },
+    {
+      "path": "app/tools/command_policy.py",
+      "role": "not-needed",
+      "reason": "命令策略与依赖写入校验，与计划依赖链深度无关",
+      "evidence_id": "EV6"
+    },
+    {
+      "path": "app/tools/security.py",
+      "role": "not-needed",
+      "reason": "工作区与命令安全校验，与计划依赖链深度无关",
+      "evidence_id": "EV9"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/planning.py",
+      "symbol": "validate_subtasks",
+      "kind": "definition",
+      "line_start": 242,
+      "line_end": 302,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/planning.py",
+      "symbol": "ready_subtasks",
+      "kind": "definition",
+      "line_start": 766,
+      "line_end": 779,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/engine/planning.py",
+      "symbol": "launchable_subtasks",
+      "kind": "definition",
+      "line_start": 797,
+      "line_end": 841,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/planner/quality.py",
+      "symbol": "max_subtasks_for",
+      "kind": "definition",
+      "line_start": 49,
+      "line_end": 51,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/planner/quality.py",
+      "symbol": "enforce_plan_quality",
+      "kind": "definition",
+      "line_start": 101,
+      "line_end": 216,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/tools/command_policy.py",
+      "symbol": "dependency_writes",
+      "kind": "definition",
+      "line_start": 121,
+      "line_end": 128,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/tools/command_policy.py",
+      "symbol": "_validate_test_target",
+      "kind": "definition",
+      "line_start": 395,
+      "line_end": 417,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/tools/command_policy.py",
+      "symbol": "_check_pytest_config",
+      "kind": "definition",
+      "line_start": 465,
+      "line_end": 518,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/tools/security.py",
+      "symbol": "validate_command",
+      "kind": "definition",
+      "line_start": 302,
+      "line_end": 317,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/tools/security.py",
+      "symbol": "resolve_workspace_root",
+      "kind": "definition",
+      "line_start": 52,
+      "line_end": 75,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "app/tools/security.py",
+      "symbol": "_protected_basenames",
+      "kind": "definition",
+      "line_start": 143,
+      "line_end": 145,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "tests/test_parallel.py",
+      "symbol": "_approved_plan",
+      "kind": "test",
+      "line_start": 82,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_modify_with_empty_write_scope_rejected",
+      "kind": "test",
+      "line_start": 53,
+      "line_end": 55,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+      "kind": "test",
+      "line_start": 58,
+      "line_end": 62,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_overlap_allowed_with_dependency_path_either_direction",
+      "kind": "test",
+      "line_start": 66,
+      "line_end": 74,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_disjoint_scopes_need_no_dependency",
+      "kind": "test",
+      "line_start": 77,
+      "line_end": 80,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+      "kind": "test",
+      "line_start": 138,
+      "line_end": 148,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_classify_and_limits",
+      "kind": "test",
+      "line_start": 26,
+      "line_end": 30,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "tests/test_planner_explore.py",
+      "symbol": "test_verify_cannot_have_write_scope",
+      "kind": "test",
+      "line_start": 109,
+      "line_end": 116,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_enforce_rejects_broad_glob",
+      "kind": "test",
+      "line_start": 33,
+      "line_end": 44,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_enforce_rejects_fake_symbol",
+      "kind": "test",
+      "line_start": 47,
+      "line_end": 58,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_to_verify_allows_unknown_symbol",
+      "kind": "test",
+      "line_start": 61,
+      "line_end": 71,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_analysis_no_modify",
+      "kind": "test",
+      "line_start": 74,
+      "line_end": 82,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_pytest_cannot_execute_non_test_scripts",
+      "kind": "test",
+      "line_start": 62,
+      "line_end": 66,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_plugin_and_config_indirection_is_rejected",
+      "kind": "test",
+      "line_start": 152,
+      "line_end": 154,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_paths_cannot_escape_the_workspace",
+      "kind": "test",
+      "line_start": 168,
+      "line_end": 170,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_absolute_outside_target_is_rejected",
+      "kind": "test",
+      "line_start": 173,
+      "line_end": 177,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_module_shadowing_is_rejected",
+      "kind": "test",
+      "line_start": 180,
+      "line_end": 185,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_shell_composition_is_rejected",
+      "kind": "test",
+      "line_start": 188,
+      "line_end": 196,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_command_policy.py",
+      "symbol": "test_coverage_cannot_run_arbitrary_script",
+      "kind": "test",
+      "line_start": 204,
+      "line_end": 208,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_workspace.py",
+      "symbol": "test_resolve_workspace_root_accepts_existing_dir",
+      "kind": "test",
+      "line_start": 59,
+      "line_end": 62,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 30,
+      "line_end": 30,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "app/engine/planning.py",
+      "symbol": "request_subtasks",
+      "kind": "caller",
+      "line_start": 1860,
+      "line_end": 1893,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "app/engine/planning.py",
+      "symbol": "request_subtasks_phase2",
+      "kind": "caller",
+      "line_start": 1897,
+      "line_end": 1986,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "app/main.py",
+      "symbol": "_validate_remaining",
+      "kind": "caller",
+      "line_start": 457,
+      "line_end": 462,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "app/engine/planning.py",
+      "symbol": "launchable_subtasks",
+      "kind": "caller",
+      "line_start": 797,
+      "line_end": 841,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "app/engine/planning.py",
+      "symbol": "next_ready_subtask",
+      "kind": "caller",
+      "line_start": 844,
+      "line_end": 860,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "app/engine/workflow.py",
+      "symbol": "pick_next_node",
+      "kind": "caller",
+      "line_start": 736,
+      "line_end": 812,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "app/main.py",
+      "symbol": "_plan_view",
+      "kind": "caller",
+      "line_start": 382,
+      "line_end": 422,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "scripts/try_plan.py",
+      "symbol": "main",
+      "kind": "caller",
+      "line_start": 46,
+      "line_end": 177,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "app/tools/command_policy.py",
+      "symbol": "classify",
+      "kind": "caller",
+      "line_start": 817,
+      "line_end": 942,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "app/tools/command_policy.py",
+      "symbol": "analyze_pytest",
+      "kind": "caller",
+      "line_start": 539,
+      "line_end": 587,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "app/tools/security.py",
+      "symbol": "requires_approval",
+      "kind": "caller",
+      "line_start": 320,
+      "line_end": 328,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "app/agents/agent_executor.py",
+      "symbol": "run_agent",
+      "kind": "caller",
+      "line_start": 535,
+      "line_end": 1699,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "app/engine/planning.py",
+      "symbol": "build_project_overview",
+      "kind": "caller",
+      "line_start": 1573,
+      "line_end": 1616,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounding",
+      "kind": "caller",
+      "line_start": 1992,
+      "line_end": 2003,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "app/engine/planning.py",
+      "symbol": "check_plan_grounding",
+      "kind": "caller",
+      "line_start": 2041,
+      "line_end": 2080,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "app/main.py",
+      "symbol": "create_run",
+      "kind": "caller",
+      "line_start": 162,
+      "line_end": 194,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "app/planner/quality.py",
+      "symbol": "enforce_plan_quality",
+      "kind": "caller",
+      "line_start": 101,
+      "line_end": 216,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "app/tools/security.py",
+      "symbol": "detect_workspace",
+      "kind": "caller",
+      "line_start": 97,
+      "line_end": 140,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "app/tools/security.py",
+      "symbol": "is_protected_file",
+      "kind": "caller",
+      "line_start": 148,
+      "line_end": 162,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "app/config.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 219,
+      "line_end": 219,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV53",
+      "path": "app/engine/planning.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 244,
+      "line_end": 244,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV54",
+      "path": "app/engine/workflow.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 587,
+      "line_end": 587,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV55",
+      "path": "app/main.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 459,
+      "line_end": 459,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV56",
+      "path": "app/planner/quality.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 49,
+      "line_end": 49,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV57",
+      "path": "scripts/try_plan.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 66,
+      "line_end": 66,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "分析 validate_subtasks 与配置加载现状",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 242,
+          "reason": "需要确认现有依赖链校验与 max_subtasks 参数形态，判断深度限制插入点",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "line": 1860,
+          "reason": "确认调用方如何构造 validate_subtasks 参数，后续需传入深度上限",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "line": 1897,
+          "reason": "phase2 调用方同样需要传递深度上限",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "242-302",
+          "text": "242| def validate_subtasks(\n243|     raw: Any,\n244|     max_subtasks: int | None = None,\n245|     *,\n246|     known_ids: set[str] | None = None,\n247|     known_nodes: list[dict[str, Any]] | None = None,\n248|     clause_ids: list[str] | None = None,\n249| ) -> list[dict[str, Any]]:\n250|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n251| \n252|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n253|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n254|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "lines": "1860-1893",
+          "text": "1860| def request_subtasks(\n1861|     llm: Any,\n1862|     messages: list[dict[str, Any]],\n1863|     max_subtasks: int,\n1864|     *,\n1865|     known_ids: set[str] | None = None,\n1866|     known_nodes: list[dict[str, Any]] | None = None,\n1867|     clause_ids: list[str] | None = None,\n1868|     retries: int = 1,\n1869| ) -> tuple[list[dict[str, Any]] | None, list[str]]:\n1870|     errors: list[str] = []\n1871|     convo = list(messages)\n1872|     for _ in range(retries + 1):"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "lines": "1897-1986",
+          "text": "1897| def request_subtasks_phase2(\n1898|     llm: Any,\n1899|     messages: list[dict[str, Any]],\n1900|     max_subtasks: int,\n1901|     *,\n1902|     goal: str,\n1903|     workspace: str | Path | None,\n1904|     known_ids: set[str] | None = None,\n1905|     known_nodes: list[dict[str, Any]] | None = None,\n1906|     clause_ids: list[str] | None = None,\n1907|     retries: int = 1,\n1908|     usage_acc: dict[str, int] | None = None,\n1909|     raw_specs: list[dict[str, Any]] | None = None,"
+        }
+      ],
+      "test_command": "pytest tests/test_planner_phase2.py::test_classify_and_limits",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读 app/engine/planning.py:validate_subtasks 与 app/config.py 现有 PLANNER_* 配置 | 期望:产出结论：validate_subtasks 是否已有深度限制、PLANNER_MAX_DEPTH 应加在 config.py 的哪个位置、request_subtasks/request_subtasks_phase2 的调用点行号 | 测试:pytest tests/test_planner_phase2.py::test_classify_and_limits | 边界:若 config.py 中无 PLANNER_* 先例，需在结论中标注 to-verify 并说明替代读取方式"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "在 validate_subtasks 中实施依赖链深度限制",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 242,
+          "reason": "在此函数内加入依赖链深度校验，读取 PLANNER_MAX_DEPTH",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "242-302",
+          "text": "242| def validate_subtasks(\n243|     raw: Any,\n244|     max_subtasks: int | None = None,\n245|     *,\n246|     known_ids: set[str] | None = None,\n247|     known_nodes: list[dict[str, Any]] | None = None,\n248|     clause_ids: list[str] | None = None,\n249| ) -> list[dict[str, Any]]:\n250|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n251| \n252|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n253|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n254|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py::test_overlapping_scopes_without_dependency_path_rejected",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:构造依赖链长度超过 PLANNER_MAX_DEPTH 的 subtasks 列表 | 期望:validate_subtasks 抛出 PlanError，错误信息包含深度上限 | 测试:pytest tests/test_plan_traceability.py::test_overlapping_scopes_without_dependency_path_rejected | 边界:链长度恰好等于上限时应通过；无依赖的独立节点不受影响",
+        "前提:依赖链长度未超过上限的合法计划 | 期望:validate_subtasks 正常返回解析后的 subtasks 列表，行为与改动前一致 | 测试:pytest tests/test_plan_traceability.py::test_disjoint_scopes_need_no_dependency | 边界:循环依赖仍按原有逻辑报错，不被深度检查掩盖"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "调用方传递深度上限",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "line": 1860,
+          "reason": "调用 validate_subtasks 时需传入深度上限",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "line": 1897,
+          "reason": "phase2 路径同样需传入深度上限",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "lines": "1860-1893",
+          "text": "1860| def request_subtasks(\n1861|     llm: Any,\n1862|     messages: list[dict[str, Any]],\n1863|     max_subtasks: int,\n1864|     *,\n1865|     known_ids: set[str] | None = None,\n1866|     known_nodes: list[dict[str, Any]] | None = None,\n1867|     clause_ids: list[str] | None = None,\n1868|     retries: int = 1,\n1869| ) -> tuple[list[dict[str, Any]] | None, list[str]]:\n1870|     errors: list[str] = []\n1871|     convo = list(messages)\n1872|     for _ in range(retries + 1):"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "lines": "1897-1986",
+          "text": "1897| def request_subtasks_phase2(\n1898|     llm: Any,\n1899|     messages: list[dict[str, Any]],\n1900|     max_subtasks: int,\n1901|     *,\n1902|     goal: str,\n1903|     workspace: str | Path | None,\n1904|     known_ids: set[str] | None = None,\n1905|     known_nodes: list[dict[str, Any]] | None = None,\n1906|     clause_ids: list[str] | None = None,\n1907|     retries: int = 1,\n1908|     usage_acc: dict[str, int] | None = None,\n1909|     raw_specs: list[dict[str, Any]] | None = None,"
+        }
+      ],
+      "test_command": "pytest tests/test_planner_phase2.py::test_enforce_rejects_broad_glob",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:通过 request_subtasks_phase2 生成超深依赖链的计划 | 期望:返回/抛出与 validate_subtasks 一致的深度超限错误 | 测试:pytest tests/test_planner_phase2.py::test_enforce_rejects_broad_glob | 边界:request_subtasks 与 request_subtasks_phase2 行为一致"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "补充深度限制回归测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_plan_traceability.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+          "line": 58,
+          "reason": "在该测试文件追加深度限制用例，复用现有 validate_subtasks 调用风格",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+          "lines": "58-62",
+          "text": "58| def test_overlapping_scopes_without_dependency_path_rejected():\n59|     specs = [sub(\"1\", kind=\"modify\", write_scope=[\"app/**\"]),\n60|              sub(\"2\", kind=\"modify\", write_scope=[\"app/main.py\"])]\n61|     with pytest.raises(P.PlanError, match=\"重叠\"):\n62|         P.validate_subtasks(specs, 8)"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py::test_overlapping_scopes_without_dependency_path_rejected",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:构造依赖链长度超过 PLANNER_MAX_DEPTH 的 subtasks 列表 | 期望:validate_subtasks 抛出 PlanError，错误信息包含深度上限 | 测试:pytest tests/test_plan_traceability.py::test_overlapping_scopes_without_dependency_path_rejected | 边界:链长度恰好等于上限时应通过；无依赖的独立节点不受影响"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "运行相关测试验证",
+      "kind": "verify",
+      "files": [
+        "tests/test_plan_traceability.py",
+        "tests/test_planner_phase2.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+          "line": 58,
+          "reason": "验证新增深度限制用例通过",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_planner_phase2.py",
+          "symbol": "test_classify_and_limits",
+          "line": 26,
+          "reason": "验证既有计划限制逻辑未被破坏",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_overlapping_scopes_without_dependency_path_rejected",
+          "lines": "58-62",
+          "text": "58| def test_overlapping_scopes_without_dependency_path_rejected():\n59|     specs = [sub(\"1\", kind=\"modify\", write_scope=[\"app/**\"]),\n60|              sub(\"2\", kind=\"modify\", write_scope=[\"app/main.py\"])]\n61|     with pytest.raises(P.PlanError, match=\"重叠\"):\n62|         P.validate_subtasks(specs, 8)"
+        },
+        {
+          "path": "tests/test_planner_phase2.py",
+          "symbol": "test_classify_and_limits",
+          "lines": "26-30",
+          "text": "26| def test_classify_and_limits():\n27|     assert Q.classify_task_type(\"分析 MAX_PLAN_REJECTIONS 在哪里生效\") == \"analysis\"\n28|     assert Q.classify_task_type(\"修复 check_write_scopes 的缺陷\") == \"bugfix\"\n29|     assert Q.classify_task_type(\"把租约函数拆到独立模块\") == \"refactor\"\n30|     assert Q.max_subtasks_for(\"分析流程\") == 3"
+        }
+      ],
+      "test_command": "pytest 相关用例全部通过，无回归",
+      "depends_on": [
+        "2",
+        "3",
+        "4"
+      ],
+      "acceptance_criteria": [
+        "前提:已完成子任务 2-4 的代码与测试修改 | 期望:pytest 相关用例全部通过，无回归 | 测试:pytest tests/test_plan_traceability.py tests/test_planner_phase2.py | 边界:若 PLANNER_MAX_DEPTH 默认值导致既有测试计划超限，需调整默认值或测试数据"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1为 analyze 却包含 targets 且 status=confirmed，但其中 EV52（app/config.py 文本证据）未被任何 target 引用，且分析目标未覆盖 config.py 的符号定位；同时分析目标引用 EV33/EV34 的 caller 证据但未说明其符号是否真实存在（EV33/EV34 为 caller 证据，symbol 为 request_subtasks/request_subtasks_phase2，需确认）。",
+      "子任务2的验收标准引用的测试 test_overlapping_scopes_without_dependency_path_rejected 与深度限制无关，测试目标不匹配；且未覆盖新增配置读取的验证。",
+      "子任务3的验收标准引用 test_enforce_rejects_broad_glob，与深度限制无关，测试目标不匹配。",
+      "子任务4的 targets 引用 test_overlapping_scopes_without_dependency_path_rejected 作为修改目标，但该测试是既有用例，新增用例应新建测试函数；targets 的 symbol 与 write_scope 语义不符（修改既有测试函数而非新增）。",
+      "子任务5为 verify，其 targets 引用测试函数但未 depends_on 子任务4的测试新增（虽 depends_on 包含4，但 targets 未指向新增测试）；且 verify 的 targets 应指向被验证的 modify 目标或新增测试。",
+      "coverage 缺失：未给出顶层 coverage 为每个证据文件指定角色（app/engine/planning.py、app/planner/quality.py、app/tools/command_policy.py、app/tools/security.py）。",
+      "子任务2描述提到复用 _ancestors，但证据登记表中无 _ancestors 的 evidence，属于无证据引用。",
+      "子任务1的 acceptance_criteria 测试目标 test_classify_and_limits 与配置分析无关。",
+      "整体未覆盖 app/config.py 的修改（新增 PLANNER_MAX_DEPTH 配置），但子任务2描述称默认读取 config.PLANNER_MAX_DEPTH，缺少对 config.py 的 modify 子任务及 write_scope。",
+      "子任务4的 write_scope 为 tests/test_plan_traceability.py，但 targets 的 symbol 为既有测试函数，未标明新增测试函数名，违反新建/修改语义。"
+    ],
+    "revised_coverage": [
+      {
+        "path": "app/engine/planning.py",
+        "role": "modify",
+        "evidence_ids": [
+          "EV1",
+          "EV33",
+          "EV34"
+        ]
+      },
+      {
+        "path": "app/config.py",
+        "role": "modify",
+        "evidence_ids": [
+          "EV52"
+        ]
+      },
+      {
+        "path": "app/planner/quality.py",
+        "role": "reference",
+        "evidence_ids": [
+          "EV4",
+          "EV5"
+        ]
+      },
+      {
+        "path": "app/tools/command_policy.py",
+        "role": "reference",
+        "evidence_ids": [
+          "EV6",
+          "EV7",
+          "EV8"
+        ]
+      },
+      {
+        "path": "app/tools/security.py",
+        "role": "reference",
+        "evidence_ids": [
+          "EV9",
+          "EV10",
+          "EV11"
+        ]
+      },
+      {
+        "path": "tests/test_plan_traceability.py",
+        "role": "modify",
+        "evidence_ids": [
+          "EV13",
+          "EV14",
+          "EV15",
+          "EV16"
+        ]
+      },
+      {
+        "path": "tests/test_planner_phase2.py",
+        "role": "verify",
+        "evidence_ids": [
+          "EV18",
+          "EV20",
+          "EV21",
+          "EV22",
+          "EV23"
+        ]
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "证据绑定失败：子任务 1 target app/config.py:PLANNER_MAX_DEPTH 与证据 EV52（app/config.py:）不一致；子任务 2 modify target PLANNER_MAX_DEPTH 不允许 to-verify；子任务 5 modify target test_dependency_chain_exceeding_max_depth_rejected 不允许 to-verify；子任务 6 target tests/test_plan_traceability.py:test_dependency_chain_exceeding_max_depth_rejected 与证据 EV14（tests/test_plan_traceability.py:test_overlapping_scopes_without_dependency_path_rejected）不一致；coverage app/planner/quality.py 角色「reference」无效；coverage app/tools/command_policy.py 角色「reference」无效；coverage app/tools/security.py 角色「reference」无效"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/config.py",
+      "app/engine/planning.py",
+      "app/planner/__init__.py",
+      "app/planner/quality.py",
+      "app/tools/command_policy.py",
+      "app/tools/security.py"
+    ],
+    "key_symbols": [
+      "app/config.py:MAX_SUBTASKS",
+      "app/engine/planning.py:launchable_subtasks",
+      "app/engine/planning.py:ready_subtasks",
+      "app/engine/planning.py:validate_subtasks",
+      "app/planner/quality.py:enforce_plan_quality",
+      "app/planner/quality.py:max_subtasks_for",
+      "app/tools/command_policy.py:_check_pytest_config",
+      "app/tools/command_policy.py:_validate_test_target",
+      "app/tools/command_policy.py:dependency_writes",
+      "app/tools/security.py:_protected_basenames",
+      "app/tools/security.py:resolve_workspace_root",
+      "app/tools/security.py:validate_command"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 25
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "PLANNER_MAX",
+          "limit": 20
+        },
+        "chars": 17
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "max_subtasks",
+          "limit": 20
+        },
+        "chars": 554
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/config.py",
+          "symbol": "MAX_SUBTASKS",
+          "max_lines": 30
+        },
+        "chars": 75
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "max_lines": 70
+        },
+        "chars": 3293
+      }
+    ],
+    "extra_round": false
+  },
+  "errors": [
+    "子任务 1 缺少 acceptance_criteria",
+    "证据绑定失败：子任务 1 target app/engine/planning.py:validate_subtasks 缺少 evidence_id；子任务 1 target app/engine/planning.py:request_subtasks 缺少 evidence_id；子任务 1 target app/engine/planning.py:request_subtasks_phase2 缺少 evidence_id；子任务 2 modify target PLANNER_MAX_DEPTH 不允许 to-verify；子任务 3 target app/engine/planning.py:validate_subtasks 缺少 evidence_id；子任务 4 target app/engine/planning.py:request_subtasks 缺少 evidence_id；子任务 4 target app/engine/planning.py:request_subtasks_phase2 缺少 evidence_id；子任务 5 target tests/test_plan_traceability.py:test_overlapping_scopes_without_dependency_path_rejected 缺少 evidence_id；子任务 6 target tests/test_plan_traceability.py:test_overlapping_scopes_without_dependency_path_rejected 缺少 evidence_id；子任务 6 target tests/test_planner_phase2.py:test_classify_and_limits 缺少 evidence_id"
+  ],
+  "usage": {
+    "prompt_tokens": 31519,
+    "completion_tokens": 9073,
+    "total_tokens": 40592
+  },
+  "cost_usd": 0.012636
+}

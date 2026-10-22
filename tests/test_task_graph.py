@@ -651,6 +651,15 @@ def _wait(client, run_id, statuses, timeout=10.0):
     raise AssertionError(f"run stuck in {r['status']}")
 
 
+def _wait_idle(run_id, timeout=5.0):
+    """Status flips to paused slightly before the runner thread exits; API
+    endpoints that require an idle run return 409 until it does."""
+    from app.main import runner as _runner
+    deadline = time.time() + timeout
+    while _runner.is_active(run_id) and time.time() < deadline:
+        time.sleep(0.02)
+
+
 PAUSED = {"waiting_for_plan_approval", "waiting_for_subtask_approval", "needs_attention",
           "succeeded", "failed", "cancelled"}
 
@@ -683,6 +692,7 @@ def test_api_reject_with_feedback_goes_back_to_decompose(api, monkeypatch):
     monkeypatch.setattr(agent_executor, "run_agent", FakeExecutor({}))
     run_id = client.post("/runs", json={"goal": "分析项目结构"}).json()["run_id"]
     _wait(client, run_id, PAUSED)
+    _wait_idle(run_id)
     r = client.post(f"/runs/{run_id}/plan/approve",
                     json={"decision": "reject", "feedback": "先读 README 再分析"})
     assert r.status_code == 200
@@ -701,6 +711,7 @@ def test_api_manual_takeover_edit_and_manual_result(api, monkeypatch):
     monkeypatch.setattr(agent_executor, "run_agent", ex)
     run_id = client.post("/runs", json={"goal": "分析项目结构"}).json()["run_id"]
     _wait(client, run_id, PAUSED)
+    _wait_idle(run_id)
     # Cosmetic edit → same version.
     r = client.patch(f"/runs/{run_id}/subtasks/2", json={"title": "改个标题"})
     assert r.status_code == 200 and r.json()["plan_version"] == 1

@@ -1,0 +1,114 @@
+{
+  "goal": "子任务超时后重试次数没有正确累加，检查 classify_failure 和 reset_subtask_for_retry 并修复",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位重试计数相关实现",
+      "description": "在 app/engine/ 与 app/agents/ 中定位 classify_failure 与 reset_subtask_for_retry 的定义与调用点，梳理超时（timeout）失败分类如何映射到重试计数（attempt/retry_count）字段，确认计数未累加的具体原因（如重置时清零、分类未标记可重试、计数写入被覆盖）。只读分析，不修改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出 classify_failure 与 reset_subtask_for_retry 的文件路径与行号",
+        "给出超时失败从分类到重试计数更新的完整调用链",
+        "明确指出计数未累加的根因（至少一处具体代码位置）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "检查现有重试相关测试覆盖",
+      "description": "在 tests/ 中检索与子任务重试、超时、classify_failure、reset_subtask_for_retry 相关的测试（如 test_execution_engine_repair.py、test_agent_executor.py 等），确认现有断言是否覆盖重试次数累加，找出缺失的测试场景。只读分析。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出相关测试文件与用例名",
+        "说明现有测试为何未捕获该缺陷",
+        "给出需要新增/加强的测试场景清单"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "修复重试计数累加逻辑",
+      "description": "根据子任务 1 的根因，修改 classify_failure 与 reset_subtask_for_retry（及必要的调用处）使超时失败后重试次数正确累加：重置时保留/递增重试计数而非清零，分类结果正确标记可重试，计数写入不被后续状态覆盖。仅改动定位到的实现文件。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "超时失败后重试计数按预期递增（每次重试 +1）",
+        "非超时/不可重试失败不误增计数",
+        "改动范围限于 app/engine 与 app/agents 内相关文件"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/**",
+        "app/agents/**"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充重试计数回归测试",
+      "description": "在 tests/ 中新增或加强测试，覆盖超时失败后多次重试计数累加、达到上限后停止重试、以及 reset_subtask_for_retry 不丢失计数的场景，使用现有测试夹具风格。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试能在修复前失败、修复后通过（逻辑上可验证）",
+        "覆盖至少：单次超时重试计数=1、连续超时计数递增、达到上限停止",
+        "测试文件符合现有 pytest 风格"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/**"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行相关测试与静态检查",
+      "description": "运行新增/相关的 pytest 用例（tests/ 中重试相关文件）以及 ruff 检查，确认修复生效且无回归。只读执行，不修改代码。",
+      "depends_on": [
+        "3",
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "相关 pytest 用例全部通过",
+        "ruff 检查无新增告警",
+        "记录执行的命令与结果摘要"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

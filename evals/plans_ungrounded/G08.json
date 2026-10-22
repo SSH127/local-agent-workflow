@@ -1,0 +1,118 @@
+{
+  "goal": "评估受保护文件（如 .env）在读取工具和规划概览中是否都被正确排除",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位受保护文件排除逻辑",
+      "description": "只读分析 app/tools/（读取工具，如 read_file/list_dir/grep 等）、app/project_context.py、app/context_builder.py、app/planner/ 中与受保护文件（.env、.env.*、密钥文件等）排除相关的实现，找出保护名单定义位置、读取工具入口、规划概览（project context / 目录树概览）生成入口，以及现有测试覆盖点（tests/ 下相关用例）。仅阅读代码，不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出受保护文件名单的定义位置（文件:行号）",
+        "列出读取工具中执行排除的代码路径（文件:行号）",
+        "列出规划概览/项目上下文中执行排除的代码路径（文件:行号）",
+        "列出已有相关测试文件与用例名，指出覆盖缺口",
+        "确认分析过程未修改任何文件"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "实测读取工具对 .env 的排除行为",
+      "description": "在只读前提下，用现有测试框架或脚本调用读取工具（read_file/list_dir/grep 等）针对工作区根目录 .env 与 .env.example 发起读取/列举/搜索，记录实际返回结果，判断是否被正确拒绝或过滤。不修改任何源码。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "记录 read_file('.env') 的实际返回（拒绝/内容/报错）",
+        "记录 list_dir 根目录时 .env 是否出现",
+        "记录 grep 搜索是否能命中 .env 内容",
+        "明确 .env.example 是否被误排除或误放行"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "实测规划概览对 .env 的排除行为",
+      "description": "只读分析：构造/调用项目上下文与规划概览生成逻辑（app/project_context.py、app/context_builder.py、app/planner/），检查生成的目录树/文件清单/上下文文本中是否出现 .env 及其内容片段。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "给出规划概览输出中是否包含 .env 文件名的结论",
+        "给出概览文本中是否泄露 .env 内容的结论",
+        "指出概览排除逻辑与读取工具排除逻辑是否共用同一名单"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充受保护文件排除的回归测试",
+      "description": "在 tests/ 下新增或扩展测试，覆盖：读取工具拒绝读取 .env、list_dir/grep 不暴露 .env、规划概览不包含 .env 名称与内容；若第 2/3 步发现缺陷则同步修复 app/tools/ 与 app/project_context.py / app/context_builder.py 中的排除逻辑。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖读取工具与规划概览两条路径",
+        "若存在缺陷，修复后排除逻辑共用统一名单",
+        "不修改 .env 本身，不引入真实密钥"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_protected_files.py",
+        "app/tools/**",
+        "app/project_context.py",
+        "app/context_builder.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行相关测试验证",
+      "description": "运行新增/修改的测试及受影响的既有测试（pytest tests/test_protected_files.py 及相关 tools/context 测试），确认全部通过且无回归。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 目标测试全部通过",
+        "输出中无失败/错误用例",
+        "记录测试命令与结果摘要"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

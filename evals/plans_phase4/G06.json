@@ -1,0 +1,1249 @@
+{
+  "goal": "在 API 中新增一个只读接口，返回当前计划的 grounding_warnings",
+  "task_type": "feature",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "确认 grounding_warnings 的落盘位置与读取路径",
+      "description": "分析规划阶段 grounding_warnings 如何写入 plan（_attach_grounding_warnings 写入 plan['grounding_warnings']），以及 storage.get_plan 返回的 plan_json 是否包含该字段；确认新增只读接口应复用 _plan_or_404 还是允许空计划返回空列表。不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定已存在的 run 且 plan 含 grounding_warnings | 期望:分析结论明确字段路径为 plan['grounding_warnings'] 且为字符串列表 | 测试:人工核对 app/engine/workflow.py::_attach_grounding_warnings 与 app/storage.py::get_plan | 边界:plan 不存在或无 subtasks 时接口应返回 404 还是空列表需给出结论"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_attach_grounding_warnings",
+          "reason": "确认 warnings 写入 plan 的键名与截断上限",
+          "evidence_ref": "EV4",
+          "evidence_id": "EV4",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "get_plan",
+          "reason": "确认读取 plan_json 时是否原样返回 grounding_warnings",
+          "evidence_ref": "EV12",
+          "evidence_id": "EV12",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "reason": "确认现有 404 语义，决定新接口是否复用",
+          "evidence_ref": "EV9",
+          "evidence_id": "EV9",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_plan_grounding",
+          "reason": "确认 warnings 的产生来源与内容形态",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "在 app/main.py 新增只读接口返回 grounding_warnings",
+      "description": "在 app/main.py 中新增 GET 路由（如 /runs/{run_id}/plan/grounding-warnings），复用 _plan_or_404 取 plan，返回 {run_id, warnings: plan.get('grounding_warnings') or []}，只读、无副作用。参照同文件 list_plan_versions/get_plan_version 的路由风格与错误处理。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:给定存在且有任务图的 run，其 plan 含 grounding_warnings=['a','b'] | 期望:GET 新接口返回 200，body 中 warnings 为 ['a','b'] | 测试:pytest tests/test_api.py::test_plan_grounding_warnings_endpoint | 边界:plan 无 grounding_warnings 字段时返回空列表而非 500",
+        "前提:给定不存在的 run_id | 期望:返回 404，detail 与 _plan_or_404 一致 | 测试:pytest tests/test_api.py::test_plan_grounding_warnings_endpoint | 边界:run 存在但无 subtasks 时同样 404"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/main.py"
+      ],
+      "targets": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "reason": "新接口复用该函数做存在性校验与 404 语义",
+          "evidence_ref": "EV9",
+          "evidence_id": "EV9",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "reason": "参照其只读路由写法与返回结构风格",
+          "evidence_ref": "EV7",
+          "evidence_id": "EV7",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充接口测试覆盖正常/空/404 三种情况",
+      "description": "在 tests/test_api.py 中新增测试 test_plan_grounding_warnings_endpoint：构造 run 与 plan（含 grounding_warnings）、无 warnings 的 plan、不存在的 run_id，分别断言 200+列表内容、200+空列表、404。参照 test_api_lifecycle 的客户端与建 run 方式。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:给定测试内构造的 run 与含 grounding_warnings 的 plan | 期望:接口返回 200 且 warnings 与写入一致 | 测试:pytest tests/test_api.py::test_plan_grounding_warnings_endpoint | 边界:无 warnings 字段返回空列表；不存在 run 返回 404"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_api.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_api_lifecycle",
+          "reason": "复用其 TestClient 与建 run 的夹具写法",
+          "evidence_ref": "EV19",
+          "evidence_id": "EV19",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查验证",
+      "description": "执行新增测试与既有 API/规划相关测试，确认无回归；运行 ruff 检查改动文件。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:给定已完成子任务 2、3 的改动 | 期望:新增测试与既有 API/grounding 测试全部通过，ruff 无新增告警 | 测试:pytest tests/test_api.py tests/test_planner_grounding.py | 边界:若既有测试因路由顺序受影响需回归确认"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_api_lifecycle",
+          "reason": "回归既有 API 生命周期测试",
+          "evidence_ref": "EV19",
+          "evidence_id": "EV19",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_planner_grounding.py",
+          "symbol": "test_check_plan_grounding",
+          "reason": "回归 grounding 相关测试",
+          "evidence_ref": "EV15",
+          "evidence_id": "EV15",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/main.py",
+      "role": "modify",
+      "reason": "新增只读路由并复用 _plan_or_404",
+      "evidence_id": "EV9"
+    },
+    {
+      "path": "app/engine/workflow.py",
+      "role": "read",
+      "reason": "确认 grounding_warnings 写入 plan 的键名",
+      "evidence_id": "EV4"
+    },
+    {
+      "path": "app/storage.py",
+      "role": "read",
+      "reason": "确认 get_plan 返回 plan_json 含该字段",
+      "evidence_id": "EV12"
+    },
+    {
+      "path": "app/engine/planning.py",
+      "role": "read",
+      "reason": "确认 warnings 来源",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "tests/test_api.py",
+      "role": "modify",
+      "reason": "新增接口测试并回归既有 API 测试",
+      "evidence_id": "EV19"
+    },
+    {
+      "path": "tests/test_planner_grounding.py",
+      "role": "verify",
+      "reason": "回归 grounding 相关测试",
+      "evidence_id": "EV15"
+    },
+    {
+      "path": "frontend/src/api.ts",
+      "role": "not-needed",
+      "reason": "目标仅要求 API 只读接口，未要求前端展示",
+      "evidence_id": "EV10"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/planning.py",
+      "symbol": "check_plan_grounding",
+      "kind": "definition",
+      "line_start": 2041,
+      "line_end": 2080,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/planning.py",
+      "symbol": "PlanError",
+      "kind": "definition",
+      "line_start": 117,
+      "line_end": 118,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounding",
+      "kind": "definition",
+      "line_start": 1992,
+      "line_end": 2003,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/engine/workflow.py",
+      "symbol": "_attach_grounding_warnings",
+      "kind": "definition",
+      "line_start": 624,
+      "line_end": 630,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/engine/workflow.py",
+      "symbol": "_route",
+      "kind": "definition",
+      "line_start": 1527,
+      "line_end": 1528,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/engine/workflow.py",
+      "symbol": "MemoryPlanStore",
+      "kind": "definition",
+      "line_start": 84,
+      "line_end": 154,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/main.py",
+      "symbol": "list_plan_versions",
+      "kind": "definition",
+      "line_start": 616,
+      "line_end": 623,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/main.py",
+      "symbol": "get_plan_version",
+      "kind": "definition",
+      "line_start": 627,
+      "line_end": 633,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/main.py",
+      "symbol": "_plan_or_404",
+      "kind": "definition",
+      "line_start": 348,
+      "line_end": 352,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "frontend/src/api.ts",
+      "symbol": "apiFetch",
+      "kind": "definition",
+      "line_start": 6,
+      "line_end": 11,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "frontend/src/api.ts",
+      "symbol": "formatApiError",
+      "kind": "definition",
+      "line_start": 12,
+      "line_end": 52,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "app/storage.py",
+      "symbol": "get_plan",
+      "kind": "definition",
+      "line_start": 315,
+      "line_end": 322,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "app/storage.py",
+      "symbol": "save_plan",
+      "kind": "definition",
+      "line_start": 336,
+      "line_end": 359,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "app/storage.py",
+      "symbol": "append_plan_version",
+      "kind": "definition",
+      "line_start": 467,
+      "line_end": 488,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "test_check_plan_grounding",
+      "kind": "test",
+      "line_start": 91,
+      "line_end": 105,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "test_planner_messages_include_grounding",
+      "kind": "test",
+      "line_start": 82,
+      "line_end": 88,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "test_try_plan_dry_run",
+      "kind": "test",
+      "line_start": 108,
+      "line_end": 115,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "tests/test_agent_executor.py",
+      "symbol": "test_model_api_error_fails",
+      "kind": "test",
+      "line_start": 348,
+      "line_end": 361,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "tests/test_api.py",
+      "symbol": "test_api_lifecycle",
+      "kind": "test",
+      "line_start": 10,
+      "line_end": 60,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_api_run_detail_and_plan_return_failure_report",
+      "kind": "test",
+      "line_start": 252,
+      "line_end": 297,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_goal_and_clauses_are_frozen",
+      "kind": "test",
+      "line_start": 180,
+      "line_end": 192,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_late_result_from_superseded_attempt_is_discarded",
+      "kind": "test",
+      "line_start": 311,
+      "line_end": 351,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_result_never_writes_any_outcome",
+      "kind": "test",
+      "line_start": 359,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_recorder_cannot_persist_state_or_status",
+      "kind": "test",
+      "line_start": 417,
+      "line_end": 461,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "tests/test_task_graph.py",
+      "symbol": "Recorder.__init__",
+      "kind": "test",
+      "line_start": 116,
+      "line_end": 120,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_high_risk_confirmed_then_runs",
+      "kind": "test",
+      "line_start": 404,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_cancel_requested_during_run_stops_at_subtask_boundary",
+      "kind": "test",
+      "line_start": 456,
+      "line_end": 469,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+      "kind": "test",
+      "line_start": 195,
+      "line_end": 220,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_structural_replan_creates_new_version_with_parent",
+      "kind": "test",
+      "line_start": 223,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_rejection_records_new_version_keeping_clauses",
+      "kind": "test",
+      "line_start": 242,
+      "line_end": 258,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_parallel.py",
+      "symbol": "_crashed_plan",
+      "kind": "test",
+      "line_start": 230,
+      "line_end": 243,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_plan_concurrency.py",
+      "symbol": "_write_plan_loop",
+      "kind": "test",
+      "line_start": 27,
+      "line_end": 50,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "tests/test_plan_concurrency.py",
+      "symbol": "test_freeze_check_reads_inside_the_write_transaction",
+      "kind": "test",
+      "line_start": 133,
+      "line_end": 153,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "app/engine/workflow.py",
+      "symbol": "_generate_specs",
+      "kind": "caller",
+      "line_start": 575,
+      "line_end": 621,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "scripts/try_plan.py",
+      "symbol": "main",
+      "kind": "caller",
+      "line_start": 46,
+      "line_end": 177,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "app/engine/planning.py",
+      "symbol": "validate_subtasks",
+      "kind": "caller",
+      "line_start": 242,
+      "line_end": 302,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "app/engine/planning.py",
+      "symbol": "check_write_scopes",
+      "kind": "caller",
+      "line_start": 325,
+      "line_end": 349,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "app/engine/planning.py",
+      "symbol": "check_clause_coverage",
+      "kind": "caller",
+      "line_start": 352,
+      "line_end": 371,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "app/engine/planning.py",
+      "symbol": "check_risk_marking",
+      "kind": "caller",
+      "line_start": 527,
+      "line_end": 540,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "app/engine/planning.py",
+      "symbol": "topological_order",
+      "kind": "caller",
+      "line_start": 549,
+      "line_end": 568,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "app/engine/planning.py",
+      "symbol": "parse_plan_text",
+      "kind": "caller",
+      "line_start": 1650,
+      "line_end": 1667,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "app/engine/planning.py",
+      "symbol": "request_subtasks_phase2",
+      "kind": "caller",
+      "line_start": 1897,
+      "line_end": 1986,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "app/planner/quality.py",
+      "symbol": "enforce_plan_quality",
+      "kind": "caller",
+      "line_start": 101,
+      "line_end": 216,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounded_planner_messages",
+      "kind": "caller",
+      "line_start": 2006,
+      "line_end": 2034,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "app/engine/workflow.py",
+      "symbol": "decompose_node",
+      "kind": "caller",
+      "line_start": 633,
+      "line_end": 692,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "app/engine/workflow.py",
+      "symbol": "run_workflow",
+      "kind": "caller",
+      "line_start": 1609,
+      "line_end": 1661,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "app/engine/workflow.py",
+      "symbol": "StoragePlanStore.list_versions",
+      "kind": "caller",
+      "line_start": 199,
+      "line_end": 201,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "app/main.py",
+      "symbol": "_record_version",
+      "kind": "caller",
+      "line_start": 446,
+      "line_end": 454,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "app/main.py",
+      "symbol": "get_run_plan",
+      "kind": "caller",
+      "line_start": 466,
+      "line_end": 468,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "app/main.py",
+      "symbol": "approve_plan",
+      "kind": "caller",
+      "line_start": 472,
+      "line_end": 521,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "app/main.py",
+      "symbol": "confirm_subtask",
+      "kind": "caller",
+      "line_start": 532,
+      "line_end": 549,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "app/main.py",
+      "symbol": "edit_subtask",
+      "kind": "caller",
+      "line_start": 561,
+      "line_end": 612,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV53",
+      "path": "app/main.py",
+      "symbol": "manual_result",
+      "kind": "caller",
+      "line_start": 677,
+      "line_end": 696,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV54",
+      "path": "frontend/src/App.tsx",
+      "symbol": "App",
+      "kind": "caller",
+      "line_start": 206,
+      "line_end": 306,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV55",
+      "path": "frontend/src/App.tsx",
+      "symbol": "refreshSelectedRun",
+      "kind": "caller",
+      "line_start": 307,
+      "line_end": 331,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV56",
+      "path": "frontend/src/App.tsx",
+      "symbol": "submitRun",
+      "kind": "caller",
+      "line_start": 445,
+      "line_end": 495,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV57",
+      "path": "frontend/src/App.tsx",
+      "symbol": "approveRun",
+      "kind": "caller",
+      "line_start": 502,
+      "line_end": 526,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV58",
+      "path": "frontend/src/App.tsx",
+      "symbol": "submitInput",
+      "kind": "caller",
+      "line_start": 527,
+      "line_end": 1056,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV59",
+      "path": "frontend/src/PlanPanel.tsx",
+      "symbol": "PlanPanel",
+      "kind": "caller",
+      "line_start": 294,
+      "line_end": 342,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV60",
+      "path": "frontend/src/PlanPanel.tsx",
+      "symbol": "tick",
+      "kind": "caller",
+      "line_start": 343,
+      "line_end": 428,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "确认 grounding_warnings 的落盘位置与读取路径",
+      "kind": "analyze",
+      "files": [
+        "app/engine/workflow.py",
+        "app/storage.py",
+        "app/main.py",
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_attach_grounding_warnings",
+          "line": 624,
+          "reason": "确认 warnings 写入 plan 的键名与截断上限",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "get_plan",
+          "line": 315,
+          "reason": "确认读取 plan_json 时是否原样返回 grounding_warnings",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "line": 348,
+          "reason": "确认现有 404 语义，决定新接口是否复用",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_plan_grounding",
+          "line": 2041,
+          "reason": "确认 warnings 的产生来源与内容形态",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_attach_grounding_warnings",
+          "lines": "624-630",
+          "text": "624| def _attach_grounding_warnings(state: Any, plan: dict[str, Any], source: str) -> None:\n625|     warnings = state.pop(\"grounding_warnings\", None) if hasattr(state, \"pop\") else None\n626|     if source != \"llm\" or not warnings:\n627|         return\n628|     plan[\"grounding_warnings\"] = list(warnings)[:20]\n629|     plan.setdefault(\"notes\", []).append(\n630|         f\"规划落地检查发现 {len(warnings)} 条警告（路径可能不存在）：\" + \"；\".join(warnings[:5]))"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "get_plan",
+          "lines": "315-322",
+          "text": "315| def get_plan(run_id: str, db_path: Path | None = None) -> dict[str, Any] | None:\n316|     with _connect(db_path) as conn:\n317|         row = conn.execute(\n318|             \"SELECT plan_json FROM run_plans WHERE run_id = ?\", (run_id,)\n319|         ).fetchone()\n320|     if row is None:\n321|         return None\n322|     return json.loads(row[0] or \"{}\") or None"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "lines": "348-352",
+          "text": "348| def _plan_or_404(run_id: str) -> dict:\n349|     plan = storage.get_plan(run_id)\n350|     if not plan or not plan.get(\"subtasks\"):\n351|         raise HTTPException(status_code=404, detail=\"该任务还没有任务图\")\n352|     return plan"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:给定已存在的 run 且 plan 含 grounding_warnings | 期望:分析结论明确字段路径为 plan['grounding_warnings'] 且为字符串列表 | 测试:人工核对 app/engine/workflow.py::_attach_grounding_warnings 与 app/storage.py::get_plan | 边界:plan 不存在或无 subtasks 时接口应返回 404 还是空列表需给出结论"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "在 app/main.py 新增只读接口返回 grounding_warnings",
+      "kind": "modify",
+      "files": [
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "line": 348,
+          "reason": "新接口复用该函数做存在性校验与 404 语义",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "line": 616,
+          "reason": "参照其只读路由写法与返回结构风格",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "lines": "348-352",
+          "text": "348| def _plan_or_404(run_id: str) -> dict:\n349|     plan = storage.get_plan(run_id)\n350|     if not plan or not plan.get(\"subtasks\"):\n351|         raise HTTPException(status_code=404, detail=\"该任务还没有任务图\")\n352|     return plan"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "lines": "616-623",
+          "text": "616| def list_plan_versions(run_id: str):\n617|     \"\"\"Append-only plan history (summaries, oldest first).\"\"\"\n618|     _run_or_404(run_id)\n619|     plan = storage.get_plan(run_id) or {}\n620|     return {\"run_id\": run_id, \"current_version\": plan.get(\"version\"),\n621|             \"current_revision\": plan.get(\"revision\"),\n622|             \"goal\": plan.get(\"goal\"), \"goal_clauses\": plan.get(\"goal_clauses\") or [],\n623|             \"versions\": storage.list_plan_versions(run_id)}"
+        }
+      ],
+      "test_command": "pytest tests/test_api.py::test_plan_grounding_warnings_endpoint",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:给定存在且有任务图的 run，其 plan 含 grounding_warnings=['a','b'] | 期望:GET 新接口返回 200，body 中 warnings 为 ['a','b'] | 测试:pytest tests/test_api.py::test_plan_grounding_warnings_endpoint | 边界:plan 无 grounding_warnings 字段时返回空列表而非 500",
+        "前提:给定不存在的 run_id | 期望:返回 404，detail 与 _plan_or_404 一致 | 测试:pytest tests/test_api.py::test_plan_grounding_warnings_endpoint | 边界:run 存在但无 subtasks 时同样 404"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "补充接口测试覆盖正常/空/404 三种情况",
+      "kind": "modify",
+      "files": [
+        "tests/test_api.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_api_lifecycle",
+          "line": 10,
+          "reason": "复用其 TestClient 与建 run 的夹具写法",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_api_lifecycle",
+          "lines": "10-60",
+          "text": "10| def test_api_lifecycle(monkeypatch, tmp_path):\n11|     db = tmp_path / \"api.sqlite3\"\n12|     monkeypatch.setattr(storage, \"DATABASE_PATH\", db)\n13|     storage.init_db(db)\n14| \n15|     # Simulate a developer machine with a real-looking key in the environment.\n16|     # The autouse fixture blanks ``config.DEEPSEEK_API_KEY``, so the background\n17|     # run must fail cleanly WITHOUT touching the network — regardless of this.\n18|     monkeypatch.setenv(\"DEEPSEEK_API_KEY\", \"sk-fake-test-key-123456\")\n19|     network_calls: list[tuple] = []\n20| \n21|     def _forbidden_post(*args, **kwargs):\n22|         network_calls.append((args, kwargs))"
+        }
+      ],
+      "test_command": "pytest tests/test_api.py::test_plan_grounding_warnings_endpoint",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:给定测试内构造的 run 与含 grounding_warnings 的 plan | 期望:接口返回 200 且 warnings 与写入一致 | 测试:pytest tests/test_api.py::test_plan_grounding_warnings_endpoint | 边界:无 warnings 字段返回空列表；不存在 run 返回 404"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查验证",
+      "kind": "verify",
+      "files": [
+        "tests/test_api.py",
+        "tests/test_planner_grounding.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_api_lifecycle",
+          "line": 10,
+          "reason": "回归既有 API 生命周期测试",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_planner_grounding.py",
+          "symbol": "test_check_plan_grounding",
+          "line": 91,
+          "reason": "回归 grounding 相关测试",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_api_lifecycle",
+          "lines": "10-60",
+          "text": "10| def test_api_lifecycle(monkeypatch, tmp_path):\n11|     db = tmp_path / \"api.sqlite3\"\n12|     monkeypatch.setattr(storage, \"DATABASE_PATH\", db)\n13|     storage.init_db(db)\n14| \n15|     # Simulate a developer machine with a real-looking key in the environment.\n16|     # The autouse fixture blanks ``config.DEEPSEEK_API_KEY``, so the background\n17|     # run must fail cleanly WITHOUT touching the network — regardless of this.\n18|     monkeypatch.setenv(\"DEEPSEEK_API_KEY\", \"sk-fake-test-key-123456\")\n19|     network_calls: list[tuple] = []\n20| \n21|     def _forbidden_post(*args, **kwargs):\n22|         network_calls.append((args, kwargs))"
+        },
+        {
+          "path": "tests/test_planner_grounding.py",
+          "symbol": "test_check_plan_grounding",
+          "lines": "91-105",
+          "text": "91| def test_check_plan_grounding(repo: Path) -> None:\n92|     specs = [\n93|         {\"id\": \"1\", \"title\": \"改解析\", \"description\": \"修改 pkg/parser.py 的 parse_file\", \"kind\": \"modify\",\n94|          \"write_scope\": [\"pkg/parser.py\", \"pkg/missing.py\", \"tests/test_*.py\"]},\n95|         {\"id\": \"2\", \"title\": \"新建测试\", \"description\": \"新建 pkg/test_new.py\", \"kind\": \"modify\",\n96|          \"write_scope\": [\"pkg/test_new.py\"]},\n97|         {\"id\": \"3\", \"title\": \"看看\", \"description\": \"阅读 pkg/ghost.py\", \"kind\": \"analyze\", \"write_scope\": []},\n98|     ]\n99|     w = P.check_plan_grounding(specs, repo)\n100|     joined = \"\\n\".join(w)\n101|     assert \"pkg/missing.py\" in joined\n102|     assert \"tests/test_*.py\" in joined\n103|     assert \"pkg/ghost.py\" in joined"
+        }
+      ],
+      "test_command": "pytest tests/test_api.py tests/test_planner_grounding.py",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:给定已完成子任务 2、3 的改动 | 期望:新增测试与既有 API/grounding 测试全部通过，ruff 无新增告警 | 测试:pytest tests/test_api.py tests/test_planner_grounding.py | 边界:若既有测试因路由顺序受影响需回归确认"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务 3 的 write_scope 为 tests/test_api.py，但 targets 仅引用既有符号 test_api_lifecycle，未标明新增测试函数名（新建测试函数须在描述中明确），且 targets 的 symbol 与新增内容不对应，验收标准中的 test_target 指向尚不存在的测试函数，需在描述中标注新建。",
+      "子任务 2 的 targets 只列了 _plan_or_404 与 list_plan_versions 两个既有符号，但实际改动是新增路由函数，缺少对新路由符号的说明；同时 write_scope 与 targets 路径虽一致，但未体现新增符号，验收标准 test_target 指向 tests/test_api.py::test_plan_grounding_warnings_endpoint 而该测试在子任务 3 才创建，跨子任务依赖未在 depends_on 中体现（子任务 2 的验收依赖子任务 3 的测试）。",
+      "子任务 1 为 analyze，但 targets 中 status=confirmed 的符号需真实存在——check_plan_grounding、_attach_grounding_warnings、get_plan、_plan_or_404 均存在，符合；但 analyze 子任务不应包含 modify 意图，当前描述合规。问题在于子任务 1 的验收标准未结构化到 precondition/expected_behavior/test_target/edge_case 四要素（当前为单条拼接字符串），不符合结构化验收要求。",
+      "所有子任务的 acceptance_criteria 均为单条拼接字符串，未按 precondition、expected_behavior、test_target、edge_case 字段结构化，违反验收标准必须结构化的规则。",
+      "子任务 2 的验收标准 test_target 引用 tests/test_api.py::test_plan_grounding_warnings_endpoint，但该测试由子任务 3 创建，子任务 2 的 depends_on 仅含子任务 1，未依赖子任务 3，导致验收无法在子任务 2 完成时验证。",
+      "顶层缺少 coverage 字段，未为证据文件 app/engine/planning.py、app/engine/workflow.py、app/main.py、frontend/src/api.ts、app/storage.py 指定角色。",
+      "frontend/src/api.ts 在证据表中出现（EV10、EV11）但计划完全未涉及前端改动，coverage 需说明其角色为不修改/仅参考，否则视为遗漏证据文件角色。",
+      "子任务 4 为 verify，depends_on 含 2、3 合规，但 targets 引用 tests/test_api.py::test_api_lifecycle 与 tests/test_planner_grounding.py::test_check_plan_grounding 作为回归目标，未包含新增测试函数作为验证目标，验证覆盖不完整。"
+    ],
+    "revised_coverage": [
+      {
+        "path": "app/engine/planning.py",
+        "role": "read_only_reference",
+        "reason": "grounding warnings 的产生来源 check_plan_grounding/build_grounding，仅分析不改"
+      },
+      {
+        "path": "app/engine/workflow.py",
+        "role": "read_only_reference",
+        "reason": "_attach_grounding_warnings 写入 plan 的键名与截断逻辑，仅分析不改"
+      },
+      {
+        "path": "app/main.py",
+        "role": "modify",
+        "reason": "新增只读路由返回 grounding_warnings，复用 _plan_or_404"
+      },
+      {
+        "path": "frontend/src/api.ts",
+        "role": "not_modified",
+        "reason": "本任务仅后端只读接口，前端 apiFetch/formatApiError 不涉及改动，仅登记角色"
+      },
+      {
+        "path": "app/storage.py",
+        "role": "read_only_reference",
+        "reason": "get_plan 读取 plan_json 是否原样返回 grounding_warnings，仅分析不改"
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "证据绑定失败：coverage app/engine/planning.py 角色「read_only_reference」无效；coverage app/engine/workflow.py 角色「read_only_reference」无效；coverage frontend/src/api.ts 角色「not_modified」无效；coverage app/storage.py 角色「read_only_reference」无效"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/storage.py",
+      "frontend/src/api.ts",
+      "tests/test_planner_grounding.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:PlanError",
+      "app/engine/planning.py:build_grounding",
+      "app/engine/planning.py:check_plan_grounding",
+      "app/engine/workflow.py:MemoryPlanStore",
+      "app/engine/workflow.py:_attach_grounding_warnings",
+      "app/engine/workflow.py:_route",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/storage.py:append_plan_version",
+      "app/storage.py:get_plan",
+      "app/storage.py:save_plan",
+      "frontend/src/api.ts:apiFetch",
+      "frontend/src/api.ts:formatApiError",
+      "tests/test_planner_grounding.py:test_check_plan_grounding",
+      "tests/test_planner_grounding.py:test_planner_messages_include_grounding"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 36
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "grounding_warnings",
+          "limit": 20
+        },
+        "chars": 199
+      },
+      {
+        "tool": "search_path",
+        "args": {
+          "query": "app/api",
+          "limit": 20
+        },
+        "chars": 13
+      },
+      {
+        "tool": "search_path",
+        "args": {
+          "query": "api",
+          "limit": 20
+        },
+        "chars": 37
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "@app.get",
+          "limit": 20
+        },
+        "chars": 35
+      }
+    ],
+    "extra_round": false
+  },
+  "errors": [
+    "证据绑定失败：子任务 1 target app/engine/workflow.py:_attach_grounding_warnings 缺少 evidence_id；子任务 1 target app/storage.py:get_plan 缺少 evidence_id；子任务 1 target app/main.py:_plan_or_404 缺少 evidence_id；子任务 1 target app/engine/planning.py:check_plan_grounding 缺少 evidence_id；子任务 2 target app/main.py:_plan_or_404 缺少 evidence_id；子任务 2 target app/main.py:list_plan_versions 缺少 evidence_id；子任务 3 target tests/test_api.py:test_api_lifecycle 缺少 evidence_id；子任务 4 target tests/test_api.py:test_api_lifecycle 缺少 evidence_id；子任务 4 target tests/test_planner_grounding.py:test_check_plan_grounding 缺少 evidence_id"
+  ],
+  "usage": {
+    "prompt_tokens": 22349,
+    "completion_tokens": 5711,
+    "total_tokens": 28060
+  },
+  "cost_usd": 0.008656
+}

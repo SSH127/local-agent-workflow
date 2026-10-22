@@ -1,0 +1,382 @@
+{
+  "goal": "子任务超时后重试次数没有正确累加，检查 classify_failure 和 reset_subtask_for_retry 并修复",
+  "task_type": "bugfix",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位超时重试计数缺陷根因",
+      "description": "只读分析，不修改代码。阅读 app/engine/planning.py 中 classify_failure（L1403-1423）完整函数体与 reset_subtask_for_retry（L1498-1510），确认：(a) classify_failure 对 timeout 类 stop_reason 的实际返回值分支；(b) reset_subtask_for_retry 是否递增 attempt_number，以及注释“bumped when leased”所指租约递增代码是否存在（若存在需给出文件与行号证据，否则标记为未找到）。同时查看 tests/test_task_graph.py::test_classify_failure_branches（L236）现有断言。产出：唯一确定的缺陷点与唯一修复位置（classify_failure 或 reset_subtask_for_retry 或租约处），并说明证据行号。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已读取 classify_failure 与 reset_subtask_for_retry 完整函数体及 test_classify_failure_branches | 期望:输出唯一缺陷根因，指明需修改的精确文件与符号，并附证据行号；若租约递增代码不存在则明确说明 | 测试:人工审阅分析结论 | 边界:区分 timeout 与 model-network/crash 等其他 transient 原因，避免误判分支"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "reason": "确认 timeout 分支实际返回值",
+          "evidence_ref": "E3 L1403-1423",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "reset_subtask_for_retry",
+          "reason": "确认 attempt_number 是否递增或被覆盖",
+          "evidence_ref": "E1 L1498-1510",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复超时重试计数累加",
+      "description": "依据子任务1确定的唯一缺陷点，在 app/engine/planning.py 内做最小修改：若缺陷在 reset_subtask_for_retry，则修正 attempt_number 的递增/保留逻辑；若缺陷在 classify_failure，则修正 timeout 分支归类。只改子任务1指明的符号，保持函数签名与返回 dict 结构不变，不触碰另一函数，避免影响 app/engine/workflow.py:verify_subtask_node 调用方。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:给定 stop_reason 为超时的 subtask，attempt_number 初始为 0 | 期望:classify_failure 返回 transient；经 reset_subtask_for_retry 后 status 为 pending 且 attempt_number 按子任务1确认的语义递增为 1，再次超时后为 2 | 测试:pytest tests/test_task_graph.py::test_classify_failure_branches | 边界:attempt_number 为 None 或缺失时按 0 处理；structural 分支行为不变",
+        "前提:非超时的 structural 输入 | 期望:classify_failure 仍返回 structural，行为与修改前一致 | 测试:pytest tests/test_task_graph.py::test_classify_failure_branches | 边界:attempt 预算耗尽时仍归 structural"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "reset_subtask_for_retry",
+          "reason": "按子任务1结论修正 attempt_number 累加逻辑",
+          "evidence_ref": "E1 L1498-1510",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "reason": "按子任务1结论确保超时归 transient",
+          "evidence_ref": "E3 L1403-1423",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充超时重试计数回归测试",
+      "description": "修改已存在的 tests/test_task_graph.py，在 test_classify_failure_branches 旁新增独立测试函数（不新建文件），构造超时 outcome，连续调用 classify_failure + reset_subtask_for_retry 两次，断言 attempt_number 依次为 1、2 且 status 回到 pending；保留原有分支断言不回归。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:已应用子任务2修复 | 期望:新增用例断言两次超时重试后 attempt_number 为 2，原有 transient/structural/rewrite_remaining 断言仍通过 | 测试:pytest tests/test_task_graph.py | 边界:attempt_number 缺失/None 的 subtask 输入"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_task_graph.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_classify_failure_branches",
+          "reason": "在既有分支测试旁新增超时重试计数用例",
+          "evidence_ref": "E4 L236",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试验证修复",
+      "description": "运行 tests/test_task_graph.py 全量，确认修复生效且无回归；如失败则回到子任务2/3修正。不修改任何文件。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:子任务2、3已完成 | 期望:pytest tests/test_task_graph.py 全部通过，超时重试用例断言 attempt_number 正确累加 | 测试:pytest tests/test_task_graph.py | 边界:同时确认 structural 与 rewrite_remaining 分支用例仍通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_classify_failure_branches",
+          "reason": "验证超时重试计数与分支行为",
+          "evidence_ref": "E4 L236",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位超时重试计数缺陷根因",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "line": 1403,
+          "reason": "确认 timeout 分支实际返回值",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "reset_subtask_for_retry",
+          "line": 1498,
+          "reason": "确认 attempt_number 是否递增或被覆盖",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "lines": "1403-1423",
+          "text": "1403| def classify_failure(subtask: dict[str, Any], outcome: Any) -> str:\n1404|     \"\"\"Map a rejected subtask to a control-loop failure branch.\n1405| \n1406|     * ``transient`` — timeout / model-network error / crash / lock conflict and\n1407|       attempts remain: retry the SAME subtask (attempt+1), plan unchanged.\n1408|     * ``structural`` — forced: the executor was blocked (no tools at all), the\n1409|       workspace was rejected, or the attempt budget is exhausted.\n1410|     * ``rewrite_remaining`` — otherwise (wrong approach). The rewrite proposal\n1411|       is still diffed: if it changes steps/deps/criteria it is escalated to\n1412|       ``structural`` by the control loop.\n1413|     \"\"\"\n1414|     stop = getattr(outcome, \"stop_reason\", None) or \"\"\n1415|     error = getattr(outcome, \"error\", None) or \"\""
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "reset_subtask_for_retry",
+          "lines": "1498-1510",
+          "text": "1498| def reset_subtask_for_retry(subtask: dict[str, Any]) -> dict[str, Any]:\n1499|     \"\"\"Transient failure: same node, bump attempt, clear running fields.\"\"\"\n1500|     s = dict(subtask)\n1501|     s[\"status\"] = SUBTASK_PENDING\n1502|     s[\"attempt_number\"] = int(s.get(\"attempt_number\") or 0)  # bumped when leased\n1503|     s[\"error\"] = None\n1504|     s[\"stop_reason\"] = \"\"\n1505|     s[\"result_summary\"] = \"\"\n1506|     s[\"result_full\"] = \"\"\n1507|     s[\"finished_at\"] = None\n1508|     s[\"finished_seq\"] = None\n1509|     # Keep acceptance_evidence from the failed attempt for diagnostics.\n1510|     return s"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已读取 classify_failure 与 reset_subtask_for_retry 完整函数体及 test_classify_failure_branches | 期望:输出唯一缺陷根因，指明需修改的精确文件与符号，并附证据行号；若租约递增代码不存在则明确说明 | 测试:人工审阅分析结论 | 边界:区分 timeout 与 model-network/crash 等其他 transient 原因，避免误判分支"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "修复超时重试计数累加",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "reset_subtask_for_retry",
+          "line": 1498,
+          "reason": "按子任务1结论修正 attempt_number 累加逻辑",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "line": 1403,
+          "reason": "按子任务1结论确保超时归 transient",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "reset_subtask_for_retry",
+          "lines": "1498-1510",
+          "text": "1498| def reset_subtask_for_retry(subtask: dict[str, Any]) -> dict[str, Any]:\n1499|     \"\"\"Transient failure: same node, bump attempt, clear running fields.\"\"\"\n1500|     s = dict(subtask)\n1501|     s[\"status\"] = SUBTASK_PENDING\n1502|     s[\"attempt_number\"] = int(s.get(\"attempt_number\") or 0)  # bumped when leased\n1503|     s[\"error\"] = None\n1504|     s[\"stop_reason\"] = \"\"\n1505|     s[\"result_summary\"] = \"\"\n1506|     s[\"result_full\"] = \"\"\n1507|     s[\"finished_at\"] = None\n1508|     s[\"finished_seq\"] = None\n1509|     # Keep acceptance_evidence from the failed attempt for diagnostics.\n1510|     return s"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "lines": "1403-1423",
+          "text": "1403| def classify_failure(subtask: dict[str, Any], outcome: Any) -> str:\n1404|     \"\"\"Map a rejected subtask to a control-loop failure branch.\n1405| \n1406|     * ``transient`` — timeout / model-network error / crash / lock conflict and\n1407|       attempts remain: retry the SAME subtask (attempt+1), plan unchanged.\n1408|     * ``structural`` — forced: the executor was blocked (no tools at all), the\n1409|       workspace was rejected, or the attempt budget is exhausted.\n1410|     * ``rewrite_remaining`` — otherwise (wrong approach). The rewrite proposal\n1411|       is still diffed: if it changes steps/deps/criteria it is escalated to\n1412|       ``structural`` by the control loop.\n1413|     \"\"\"\n1414|     stop = getattr(outcome, \"stop_reason\", None) or \"\"\n1415|     error = getattr(outcome, \"error\", None) or \"\""
+        }
+      ],
+      "test_command": "pytest tests/test_task_graph.py::test_classify_failure_branches",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:给定 stop_reason 为超时的 subtask，attempt_number 初始为 0 | 期望:classify_failure 返回 transient；经 reset_subtask_for_retry 后 status 为 pending 且 attempt_number 按子任务1确认的语义递增为 1，再次超时后为 2 | 测试:pytest tests/test_task_graph.py::test_classify_failure_branches | 边界:attempt_number 为 None 或缺失时按 0 处理；structural 分支行为不变",
+        "前提:非超时的 structural 输入 | 期望:classify_failure 仍返回 structural，行为与修改前一致 | 测试:pytest tests/test_task_graph.py::test_classify_failure_branches | 边界:attempt 预算耗尽时仍归 structural"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "补充超时重试计数回归测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_task_graph.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_classify_failure_branches",
+          "line": 236,
+          "reason": "在既有分支测试旁新增超时重试计数用例",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_classify_failure_branches",
+          "lines": "236-244",
+          "text": "236| def test_classify_failure_branches(monkeypatch):\n237|     monkeypatch.setattr(config, \"MAX_SUBTASK_ATTEMPTS\", 3)\n238|     s = {\"attempt_number\": 1}\n239|     mk = lambda stop, err=\"\": AgentOutcome(status=\"failed\", summary=\"\", error=err, stop_reason=stop)\n240|     assert P.classify_failure(s, mk(\"task_timeout\")) == P.FAIL_TRANSIENT\n241|     assert P.classify_failure(s, mk(\"tool_failure\", \"database is locked\")) == P.FAIL_TRANSIENT\n242|     assert P.classify_failure(s, mk(\"no_progress\")) == P.FAIL_REWRITE\n243|     assert P.classify_failure(s, mk(\"blocked\")) == P.FAIL_STRUCTURAL\n244|     assert P.classify_failure({\"attempt_number\": 3}, mk(\"task_timeout\")) == P.FAIL_STRUCTURAL"
+        }
+      ],
+      "test_command": "pytest tests/test_task_graph.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:已应用子任务2修复 | 期望:新增用例断言两次超时重试后 attempt_number 为 2，原有 transient/structural/rewrite_remaining 断言仍通过 | 测试:pytest tests/test_task_graph.py | 边界:attempt_number 缺失/None 的 subtask 输入"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试验证修复",
+      "kind": "verify",
+      "files": [
+        "tests/test_task_graph.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_classify_failure_branches",
+          "line": 236,
+          "reason": "验证超时重试计数与分支行为",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_classify_failure_branches",
+          "lines": "236-244",
+          "text": "236| def test_classify_failure_branches(monkeypatch):\n237|     monkeypatch.setattr(config, \"MAX_SUBTASK_ATTEMPTS\", 3)\n238|     s = {\"attempt_number\": 1}\n239|     mk = lambda stop, err=\"\": AgentOutcome(status=\"failed\", summary=\"\", error=err, stop_reason=stop)\n240|     assert P.classify_failure(s, mk(\"task_timeout\")) == P.FAIL_TRANSIENT\n241|     assert P.classify_failure(s, mk(\"tool_failure\", \"database is locked\")) == P.FAIL_TRANSIENT\n242|     assert P.classify_failure(s, mk(\"no_progress\")) == P.FAIL_REWRITE\n243|     assert P.classify_failure(s, mk(\"blocked\")) == P.FAIL_STRUCTURAL\n244|     assert P.classify_failure({\"attempt_number\": 3}, mk(\"task_timeout\")) == P.FAIL_STRUCTURAL"
+        }
+      ],
+      "test_command": "pytest tests/test_task_graph.py 全部通过，超时重试用例断言 attempt_number 正确累加",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:子任务2、3已完成 | 期望:pytest tests/test_task_graph.py 全部通过，超时重试用例断言 attempt_number 正确累加 | 测试:pytest tests/test_task_graph.py | 边界:同时确认 structural 与 rewrite_remaining 分支用例仍通过"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1为 analyze 却包含 targets 且 status=to-verify 的 app/engine/workflow.py::verify_subtask_node，规则要求 analysis 目标禁止 modify；此处虽 kind=analyze 但 targets 指向待修改候选，且 to-verify 符号不应作为分析确认依据，应移除或明确只读。",
+      "子任务2的修复方案自相矛盾：描述中同时给出“若租约处未 bump 则在此 +1；若租约已 bump 则修正被覆盖的写法”，未在分析结论前确定唯一修复点，导致 modify 目标不确定，可能误改 classify_failure 与 reset_subtask_for_retry 两处。",
+      "子任务2的验收标准声称“经 reset_subtask_for_retry 后 attempt_number 递增为 1”，但 E1 证据显示该函数注释为 bumped when leased，且函数体只读取不递增；在未确认租约逻辑前，该期望行为缺乏证据支撑，属于编造预期。",
+      "子任务3的 write_scope 为 tests/test_task_graph.py，但描述称“新增/扩展测试（新建测试函数，文件已存在）”，未明确是修改既有文件还是新建文件；规则要求新建文件须在描述中标明，此处表述含糊。",
+      "子任务3的 targets 指向 test_classify_failure_branches，但描述要新增独立用例，targets 与实际修改符号不一致，应指向新增测试函数或明确修改既有函数。",
+      "子任务4 verify 的边界提到 pytest tests/test_residual_033.py，该文件未在探索证据中出现，属于编造未验证的测试目标。",
+      "整体缺少对“超时”具体 stop_reason 取值的证据：E3 仅显示 classify_failure 文档字符串，未展示 timeout 分支实际代码，子任务2直接断言超时归 transient 缺乏 confirmed 证据。",
+      "步骤数4在 bugfix 上限5内，但子任务1与2可合并为一次定位+修复，当前拆分导致分析结论未落地即进入修改，规划冗余。"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/agents/agent_executor.py",
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/schemas.py",
+      "app/storage.py"
+    ],
+    "key_symbols": [
+      "app/agents/agent_executor.py:RunRecorder",
+      "app/agents/agent_executor.py:_run_tool_handler",
+      "app/agents/agent_executor.py:classify_phase",
+      "app/engine/planning.py:classify_failure",
+      "app/engine/planning.py:classify_final_verify_failure",
+      "app/engine/planning.py:reset_subtask_for_retry",
+      "app/engine/workflow.py:RunContext",
+      "app/engine/workflow.py:SubtaskRecorder",
+      "app/engine/workflow.py:execute_subtask_node",
+      "app/engine/workflow.py:verify_subtask_node",
+      "app/main.py:_attach_failure_report",
+      "app/main.py:create_run",
+      "app/main.py:run_events",
+      "app/schemas.py:RunCreate",
+      "app/schemas.py:RunResponse",
+      "app/schemas.py:SubtaskEditRequest"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 38
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "classify_failure",
+          "max_lines": 40
+        },
+        "chars": 1372
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "attempt_number",
+          "limit": 30
+        },
+        "chars": 694
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "limit": 30,
+          "query": "reset_subtask_for_retry|FAIL_TRANSIENT|bumped when leased"
+        },
+        "chars": 63
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "max_lines": 40,
+          "path": "app/engine/workflow.py",
+          "symbol": "verify_subtask_node"
+        },
+        "chars": 2123
+      }
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 13370,
+    "completion_tokens": 3543,
+    "total_tokens": 16913
+  },
+  "cost_usd": 0.005232
+}

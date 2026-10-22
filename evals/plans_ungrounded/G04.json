@@ -1,0 +1,89 @@
+{
+  "goal": "分析计划被用户拒绝后重新拆解的完整流程，说明 MAX_PLAN_REJECTIONS 在哪里生效",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位计划拒绝与重拆解相关代码",
+      "description": "在 app/ 下检索 MAX_PLAN_REJECTIONS、plan rejection、replan、plan_version 等关键字，定位计划生成、用户拒绝、重新拆解的控制流所在文件（重点 app/engine/、app/planner/、app/agents/、app/schemas.py、app/config.py、app/storage.py），列出关键函数与调用链。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "给出 MAX_PLAN_REJECTIONS 的定义位置（文件+行号）与所有引用点清单",
+        "列出计划被拒绝后触发重新拆解的入口函数与调用链（含状态机/图节点名）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "梳理拒绝→重拆解完整流程",
+      "description": "基于任务1的定位，阅读相关代码与 tests/test_approval_flow.py、tests/test_approvals.py 等测试，梳理完整流程：计划提交→用户拒绝（API/审批接口）→计数与版本记录→重新调用规划器→新计划版本落库→再次等待审批；说明各步骤涉及的文件与数据结构（计划版本历史、拒绝原因）。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "按时间顺序描述拒绝后重拆解的每个步骤并标注对应文件/函数",
+        "说明计划版本历史与拒绝原因如何持久化（storage/schemas 字段）",
+        "引用至少一个现有测试用例佐证流程"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "说明 MAX_PLAN_REJECTIONS 生效点与边界行为",
+      "description": "精确说明 MAX_PLAN_REJECTIONS 在何处被读取与比较（配置默认值、计数递增时机、达到上限后的分支：终止/报错/转人工），以及计数是否按任务重置、与 FINAL_VERIFY_MAX_REPLANS 等其它预算的区别；给出代码片段引用与行号。",
+      "depends_on": [
+        "1",
+        "2"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "指出 MAX_PLAN_REJECTIONS 的默认值与配置来源（app/config.py 或 .env.example）",
+        "说明计数在哪个函数递增、在哪个判断处生效、超限后的具体行为",
+        "区分 MAX_PLAN_REJECTIONS 与其它重规划预算的语义差异"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "汇总流程说明文档",
+      "description": "将任务1-3的结论整理为一份面向 C1 的说明：流程图式文字描述 + MAX_PLAN_REJECTIONS 生效位置表格（文件、函数、行号、行为），并标注相关测试覆盖情况。仅输出分析结论，不修改仓库代码。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "输出包含完整流程步骤、关键文件/函数引用与行号",
+        "明确回答 MAX_PLAN_REJECTIONS 在哪里生效及其超限行为",
+        "结论与代码实际一致，无未验证的推测性描述"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

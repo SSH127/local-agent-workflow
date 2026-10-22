@@ -1,0 +1,118 @@
+{
+  "goal": "最终验收失败时，把失败条款和对应子任务写入失败报告，扩展 build_failure_report 和 clause_report",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析现有失败报告与条款报告实现",
+      "description": "只读分析 app/engine/planning.py 中 build_failure_report（L1187）与 clause_report（L1262）的现有输出结构、app/engine/workflow.py 中 fail_node（L1463）与 final_verify_node（L1346）的调用方式，以及 app/main.py:_attach_failure_report（L202）与前端 frontend/src/failureReportModel.ts 的消费字段。确认失败条款（clause_report 中 status != covered）与对应子任务（serves_clauses 含该条款的 subtask id/status/verify_note）当前是否已进入 failure_report，列出需要新增/扩展的字段名与兼容性约束。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "输出一份字段级差异清单：build_failure_report 现有键、clause_report 现有键、需新增的失败条款条目字段（如 clause_id/text/status/serving_subtasks）",
+        "明确 fail_node 与 final_verify_node 调用 build_failure_report 的入参是否足以计算失败条款，若不足指出需补充的参数",
+        "列出受影响的现有测试文件与断言（tests/test_acceptance_gaps.py、tests/test_delivery_integrity.py、tests/test_plan_traceability.py）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "扩展 clause_report 输出失败条款明细",
+      "description": "修改 app/engine/planning.py 的 clause_report，使每条条款条目在保留现有 status 语义（covered/insufficient/planned/missing）的同时，附带服务该条款的子任务明细（subtask_id、status、verify_note/证据摘要），并提供辅助函数（如 failed_clauses(plan)）筛选出未 covered 的条款及其对应子任务，供 build_failure_report 复用。保持向后兼容：已有键不删除、不改语义。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "clause_report 每条条目新增 serving_subtasks 列表，元素含 subtask_id 与 status",
+        "新增 failed_clauses(plan) 返回 status 非 covered 的条款及其 serving_subtasks",
+        "现有 clause_report 调用方（workflow.final_verify_node、main._plan_view）无需改动即可运行"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "扩展 build_failure_report 写入失败条款与子任务",
+      "description": "修改 app/engine/planning.py 的 build_failure_report，新增 failed_clauses 字段（来自 failed_clauses(plan)），每条含 clause_id、clause 文本、status、serving_subtasks（id/status/verify_note），并在 evidence_gaps 中补充未覆盖条款说明；确保不伪造证据、result_full 仍原样保留。同步检查 app/engine/workflow.py 的 fail_node 调用是否需要传入额外参数（如 failure_reason 已足够则不改）。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "build_failure_report 返回 dict 含 failed_clauses 列表，元素含 clause_id、status、serving_subtasks",
+        "无 goal_clauses 的 legacy plan 调用 build_failure_report 不抛异常，failed_clauses 为空列表",
+        "fail_node 生成的 plan['failure_report'] 持久化后包含 failed_clauses"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充失败报告条款映射的单元测试",
+      "description": "在 tests/ 下新增或扩展测试（如 tests/test_failure_report_clauses.py），覆盖：最终验收失败时 build_failure_report 的 failed_clauses 含失败条款与对应子任务 id；clause_report 的 serving_subtasks 明细；legacy plan 无条款时为空；insufficient 与 missing 状态均被计入失败条款。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖 covered 条款不出现在 failed_clauses、insufficient/missing/planned 条款出现",
+        "测试断言 serving_subtasks 中 subtask_id 与 plan 中 serves_clauses 一致",
+        "legacy plan 用例断言 failed_clauses == []"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_failure_report_clauses.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行相关测试与静态检查验证",
+      "description": "运行 pytest 目标测试集（tests/test_failure_report_clauses.py、tests/test_acceptance_gaps.py、tests/test_delivery_integrity.py、tests/test_plan_traceability.py、tests/test_api.py）与 ruff check，确认扩展未破坏既有 clause_report / failure_report 行为。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 指定测试文件全部通过",
+        "ruff check app tests 无新增错误",
+        "测试输出中可见 failed_clauses 相关断言通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [
+    "子任务 5: 描述中提到的文件 tests/test_failure_report_clauses.py 不存在"
+  ]
+}

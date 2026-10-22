@@ -1,0 +1,1296 @@
+{
+  "goal": "把 build_project_overview 和 build_grounding 合并为统一的规划上下文构建入口，保持 workflow 行为不变",
+  "task_type": "refactor",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析现有规划上下文构建链路与调用方",
+      "description": "阅读 app/engine/planning.py 中 build_project_overview、build_grounding、build_planner_messages、build_grounded_planner_messages 的实现与调用关系，确认合并后统一入口需要保持的输入/输出契约（overview 字符串、grounding dict、messages 列表）。同时确认 app/planner/context.py:build_grounding_pack 的签名与返回结构。产出：统一入口的函数签名草案与行为等价性检查清单，不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定现有 planning.py 与 planner/context.py 源码 | 期望:输出统一入口签名草案，明确 overview/grounding/messages 三者的输入输出与 None 语义 | 测试:人工审阅（analyze 任务无自动测试） | 边界:PLANNER_GROUNDING 关闭时 build_grounding 返回 None 的分支必须被覆盖"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "reason": "合并来源之一，需确认其输出契约",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "reason": "合并来源之一，需确认其返回 dict/None 语义",
+          "evidence_ref": "EV3",
+          "evidence_id": "EV3",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "现有组合调用点，合并后需保持其行为",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/context.py",
+          "symbol": "build_grounding_pack",
+          "reason": "grounding 实际构建实现，确认签名",
+          "evidence_ref": "EV11",
+          "evidence_id": "EV11",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "在 planning.py 新增统一规划上下文构建入口",
+      "description": "在 app/engine/planning.py 中新增统一入口函数（例如 build_planning_context），内部复用 build_project_overview 与 build_grounding 的现有逻辑，返回包含 overview 与 grounding 的结构；保留 build_project_overview 与 build_grounding 作为薄封装或直接内联，确保 build_grounded_planner_messages 改为调用统一入口后输出与原来完全一致。不改变 build_planner_messages 的签名。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:给定同一 goal/workspace/max_subtasks/clauses 参数 | 期望:build_grounded_planner_messages 返回的 messages 与 grounding 与重构前逐字段一致 | 测试:pytest tests/test_planner_grounding.py::test_rank_and_pack | 边界:PLANNER_GROUNDING=False 时 grounding 为 None 且 messages 不含 grounding 前缀",
+        "前提:给定非法 workspace 触发 SecurityError | 期望:统一入口返回空 overview 且 grounding 为 None，不抛异常 | 测试:pytest tests/test_planner_grounding.py | 边界:workspace 为 None 时回退 config.WORKSPACE_PATH"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "改为调用统一入口，保持对外行为不变",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "reason": "合并来源，保留兼容封装",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "reason": "合并来源，保留兼容封装",
+          "evidence_ref": "EV3",
+          "evidence_id": "EV3",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "校验规划质量与 API 层未受合并影响",
+      "description": "确认 app/planner/quality.py:enforce_plan_quality 与 build_handoff_packets 不直接依赖被合并的两个函数；确认 app/main.py 的 plan 版本接口与 app/project_context.py:ProjectContext 的缓存行为不受影响。若发现隐式依赖，记录并在子任务 2 的封装中保持兼容。本子任务只读，不修改。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定合并后的 planning.py | 期望:quality.py 与 main.py 的导入与调用链无断裂，ProjectContext 缓存测试仍通过 | 测试:pytest tests/test_planner_phase2.py::test_handoff_packets | 边界:若发现隐式依赖，需在报告中列出并回填到子任务 2"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/planner/quality.py",
+          "symbol": "enforce_plan_quality",
+          "reason": "确认不依赖被合并函数",
+          "evidence_ref": "EV12",
+          "evidence_id": "EV12",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/quality.py",
+          "symbol": "build_handoff_packets",
+          "reason": "确认不依赖被合并函数",
+          "evidence_ref": "EV13",
+          "evidence_id": "EV13",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "reason": "确认 API 层未受影响",
+          "evidence_ref": "EV14",
+          "evidence_id": "EV14",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/project_context.py",
+          "symbol": "ProjectContext",
+          "reason": "确认缓存行为未受影响",
+          "evidence_ref": "EV5",
+          "evidence_id": "EV5",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行回归测试验证 workflow 行为不变",
+      "description": "运行规划相关与 workflow 相关测试，确认合并后 build_grounded_planner_messages 输出不变、grounding 开关分支正确、ProjectContext 缓存与 workflow 控制循环行为不变。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:合并已完成 | 期望:规划与 workflow 相关测试全部通过 | 测试:pytest tests/test_planner_grounding.py tests/test_planner_phase2.py tests/test_workflow.py | 边界:PLANNER_GROUNDING 关闭与开启两种配置均需覆盖",
+        "前提:合并已完成 | 期望:ProjectContext 缓存相关测试通过 | 测试:pytest tests/test_project_context.py | 边界:跨 run 复用与文件修改失效缓存"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "reason": "验证合并后输出等价",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "build_workflow",
+          "reason": "验证 workflow 行为不变",
+          "evidence_ref": "EV8",
+          "evidence_id": "EV8",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/engine/planning.py",
+      "role": "modify",
+      "reason": "合并 build_project_overview 与 build_grounding 为统一入口并保持 build_grounded_planner_messages 行为",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "app/planner/context.py",
+      "role": "read",
+      "reason": "build_grounding_pack 是 grounding 实际实现，需确认签名",
+      "evidence_id": "EV11"
+    },
+    {
+      "path": "app/planner/quality.py",
+      "role": "read",
+      "reason": "确认 enforce_plan_quality 与 build_handoff_packets 不依赖被合并函数",
+      "evidence_id": "EV12"
+    },
+    {
+      "path": "app/main.py",
+      "role": "read",
+      "reason": "确认 plan 版本 API 未受合并影响",
+      "evidence_id": "EV14"
+    },
+    {
+      "path": "app/project_context.py",
+      "role": "read",
+      "reason": "确认 ProjectContext 缓存行为未受影响",
+      "evidence_id": "EV5"
+    },
+    {
+      "path": "app/engine/workflow.py",
+      "role": "verify",
+      "reason": "验证 workflow 控制循环行为不变",
+      "evidence_id": "EV8"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounded_planner_messages",
+      "kind": "definition",
+      "line_start": 2006,
+      "line_end": 2034,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/planning.py",
+      "symbol": "build_project_overview",
+      "kind": "definition",
+      "line_start": 1573,
+      "line_end": 1616,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounding",
+      "kind": "definition",
+      "line_start": 1992,
+      "line_end": 2003,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/engine/planning.py",
+      "symbol": "build_planner_messages",
+      "kind": "definition",
+      "line_start": 1677,
+      "line_end": 1706,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext",
+      "kind": "definition",
+      "line_start": 100,
+      "line_end": 505,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext._context_lines",
+      "kind": "definition",
+      "line_start": 433,
+      "line_end": 442,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext.list_files",
+      "kind": "definition",
+      "line_start": 311,
+      "line_end": 338,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/engine/workflow.py",
+      "symbol": "build_workflow",
+      "kind": "definition",
+      "line_start": 1531,
+      "line_end": 1572,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/engine/workflow.py",
+      "symbol": "MemoryPlanStore",
+      "kind": "definition",
+      "line_start": 84,
+      "line_end": 154,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/engine/workflow.py",
+      "symbol": "StoragePlanStore",
+      "kind": "definition",
+      "line_start": 157,
+      "line_end": 201,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "app/planner/context.py",
+      "symbol": "build_grounding_pack",
+      "kind": "definition",
+      "line_start": 137,
+      "line_end": 193,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "app/planner/quality.py",
+      "symbol": "enforce_plan_quality",
+      "kind": "definition",
+      "line_start": 101,
+      "line_end": 216,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "app/planner/quality.py",
+      "symbol": "build_handoff_packets",
+      "kind": "definition",
+      "line_start": 244,
+      "line_end": 297,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "app/main.py",
+      "symbol": "list_plan_versions",
+      "kind": "definition",
+      "line_start": 616,
+      "line_end": 623,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "app/main.py",
+      "symbol": "get_plan_version",
+      "kind": "definition",
+      "line_start": 627,
+      "line_end": 633,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "app/main.py",
+      "symbol": "_plan_or_404",
+      "kind": "definition",
+      "line_start": 348,
+      "line_end": 352,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "app/engine/workflow.py",
+      "symbol": "_generate_specs",
+      "kind": "definition",
+      "line_start": 575,
+      "line_end": 621,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "app/engine/workflow.py",
+      "symbol": "WorkflowState",
+      "kind": "definition",
+      "line_start": 474,
+      "line_end": 501,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "app/engine/workflow.py",
+      "symbol": "run_workflow",
+      "kind": "definition",
+      "line_start": 1609,
+      "line_end": 1661,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "tests/conftest.py",
+      "symbol": "_legacy_workflow_defaults",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 74,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "tests/test_workflow.py",
+      "symbol": "test_workflow_fails_when_no_tool_executed",
+      "kind": "test",
+      "line_start": 47,
+      "line_end": 54,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "tests/test_workflow.py",
+      "symbol": "test_workflow_fails_without_api_key",
+      "kind": "test",
+      "line_start": 57,
+      "line_end": 63,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "tests/test_edit_tool.py",
+      "symbol": "test_edit_file_updates_project_cache",
+      "kind": "test",
+      "line_start": 112,
+      "line_end": 132,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_repeated_read_hits_cache",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 81,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_same_range_repeated_read_via_tool_hits_cache",
+      "kind": "test",
+      "line_start": 84,
+      "line_end": 97,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_modified_file_invalidates_cache",
+      "kind": "test",
+      "line_start": 104,
+      "line_end": 113,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_write_then_read_returns_latest",
+      "kind": "test",
+      "line_start": 116,
+      "line_end": 129,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_projects_do_not_share_content",
+      "kind": "test",
+      "line_start": 136,
+      "line_end": 151,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_project_context.py",
+      "symbol": "test_cross_run_reuse_when_version_unchanged",
+      "kind": "test",
+      "line_start": 154,
+      "line_end": 167,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_goal_and_clauses_are_frozen",
+      "kind": "test",
+      "line_start": 180,
+      "line_end": 192,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_late_result_from_superseded_attempt_is_discarded",
+      "kind": "test",
+      "line_start": 311,
+      "line_end": 351,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_result_never_writes_any_outcome",
+      "kind": "test",
+      "line_start": 359,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_recorder_cannot_persist_state_or_status",
+      "kind": "test",
+      "line_start": 417,
+      "line_end": 461,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "tests/test_task_graph.py",
+      "symbol": "Recorder.__init__",
+      "kind": "test",
+      "line_start": 116,
+      "line_end": 120,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_high_risk_confirmed_then_runs",
+      "kind": "test",
+      "line_start": 404,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_cancel_requested_during_run_stops_at_subtask_boundary",
+      "kind": "test",
+      "line_start": 456,
+      "line_end": 469,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_final_verify_failure_persists_structured_report",
+      "kind": "test",
+      "line_start": 130,
+      "line_end": 153,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_final_verify_replan_limit_persists_failure_report",
+      "kind": "test",
+      "line_start": 156,
+      "line_end": 180,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_long_result_preserved_in_full_and_summary_is_marked",
+      "kind": "test",
+      "line_start": 208,
+      "line_end": 226,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_api_run_detail_and_plan_return_failure_report",
+      "kind": "test",
+      "line_start": 252,
+      "line_end": 297,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_crash_recovery_with_two_expired_leases",
+      "kind": "test",
+      "line_start": 246,
+      "line_end": 262,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_live_foreign_lease_blocks_only_that_subtask",
+      "kind": "test",
+      "line_start": 265,
+      "line_end": 275,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "test_rank_and_pack",
+      "kind": "test",
+      "line_start": 69,
+      "line_end": 79,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "tests/test_planner_explore.py",
+      "symbol": "test_verify_cannot_have_write_scope",
+      "kind": "test",
+      "line_start": 109,
+      "line_end": 116,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_enforce_rejects_broad_glob",
+      "kind": "test",
+      "line_start": 33,
+      "line_end": 44,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_enforce_rejects_fake_symbol",
+      "kind": "test",
+      "line_start": 47,
+      "line_end": 58,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_to_verify_allows_unknown_symbol",
+      "kind": "test",
+      "line_start": 61,
+      "line_end": 71,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_analysis_no_modify",
+      "kind": "test",
+      "line_start": 74,
+      "line_end": 82,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_handoff_packets",
+      "kind": "test",
+      "line_start": 85,
+      "line_end": 95,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+      "kind": "test",
+      "line_start": 195,
+      "line_end": 220,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_structural_replan_creates_new_version_with_parent",
+      "kind": "test",
+      "line_start": 223,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_rejection_records_new_version_keeping_clauses",
+      "kind": "test",
+      "line_start": 242,
+      "line_end": 258,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV53",
+      "path": "tests/test_planner_explore.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 25,
+      "line_end": 25,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV54",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 84,
+      "line_end": 84,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV55",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 110,
+      "line_end": 110,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV56",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounded_planner_messages",
+      "kind": "caller",
+      "line_start": 2006,
+      "line_end": 2034,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV57",
+      "path": "app/agents/agent_executor.py",
+      "symbol": "run_agent",
+      "kind": "caller",
+      "line_start": 535,
+      "line_end": 1699,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV58",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext.search",
+      "kind": "caller",
+      "line_start": 444,
+      "line_end": 505,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV59",
+      "path": "app/project_context.py",
+      "symbol": "ProjectContext._rel_files",
+      "kind": "caller",
+      "line_start": 356,
+      "line_end": 361,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV60",
+      "path": "app/tools/registry.py",
+      "symbol": "_list_files",
+      "kind": "caller",
+      "line_start": 75,
+      "line_end": 115,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "分析现有规划上下文构建链路与调用方",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/planner/context.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "line": 1573,
+          "reason": "合并来源之一，需确认其输出契约",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "line": 1992,
+          "reason": "合并来源之一，需确认其返回 dict/None 语义",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 2006,
+          "reason": "现有组合调用点，合并后需保持其行为",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/context.py",
+          "symbol": "build_grounding_pack",
+          "line": 137,
+          "reason": "grounding 实际构建实现，确认签名",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "lines": "1573-1616",
+          "text": "1573| def build_project_overview(workspace: str | Path | None, max_chars: int | None = None) -> str:\n1574|     limit = max_chars if max_chars is not None else config.PLANNER_OVERVIEW_MAX_CHARS\n1575|     try:\n1576|         root = resolve_workspace_root(\n1577|             workspace if workspace is not None else config.WORKSPACE_PATH\n1578|         )\n1579|     except SecurityError:\n1580|         return \"\"\n1581|     lines: list[str] = [f\"工作区：{root}\", \"目录结构（最多两层）：\"]\n1582|     try:\n1583|         entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))\n1584|     except OSError:\n1585|         entries = []"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "lines": "1992-2003",
+          "text": "1992| def build_grounding(goal: str, workspace: str | Path | None,\n1993|                     max_chars: int | None = None) -> dict[str, Any] | None:\n1994|     \"\"\"Return the grounding pack dict, or None when disabled / failed.\"\"\"\n1995|     if not config.PLANNER_GROUNDING:\n1996|         return None\n1997|     try:\n1998|         from app.planner.context import build_grounding_pack\n1999|         root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)\n2000|         limit = max_chars if max_chars is not None else config.PLANNER_CONTEXT_MAX_CHARS\n2001|         return build_grounding_pack(goal, root, max_chars=limit)\n2002|     except Exception:  # noqa: BLE001 — grounding is best-effort; fall back to overview\n2003|         return None"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "2006-2034",
+          "text": "2006| def build_grounded_planner_messages(\n2007|     goal: str, workspace: str | Path | None, max_subtasks: int,\n2008|     clauses: list[dict[str, str]] | None = None,\n2009|     *,\n2010|     phase2: bool = False,\n2011|     explore_text: str | None = None,\n2012| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n2013|     overview = build_project_overview(workspace)\n2014|     pack = build_grounding(goal, workspace)\n2015|     ground = None\n2016|     if explore_text:\n2017|         # Prefer explored evidence; keep a short keyword pack as appendix.\n2018|         extra = (pack or {}).get(\"text\") or \"\""
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:给定现有 planning.py 与 planner/context.py 源码 | 期望:输出统一入口签名草案，明确 overview/grounding/messages 三者的输入输出与 None 语义 | 测试:人工审阅（analyze 任务无自动测试） | 边界:PLANNER_GROUNDING 关闭时 build_grounding 返回 None 的分支必须被覆盖"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "在 planning.py 新增统一规划上下文构建入口",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 2006,
+          "reason": "改为调用统一入口，保持对外行为不变",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "line": 1573,
+          "reason": "合并来源，保留兼容封装",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "line": 1992,
+          "reason": "合并来源，保留兼容封装",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "2006-2034",
+          "text": "2006| def build_grounded_planner_messages(\n2007|     goal: str, workspace: str | Path | None, max_subtasks: int,\n2008|     clauses: list[dict[str, str]] | None = None,\n2009|     *,\n2010|     phase2: bool = False,\n2011|     explore_text: str | None = None,\n2012| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n2013|     overview = build_project_overview(workspace)\n2014|     pack = build_grounding(goal, workspace)\n2015|     ground = None\n2016|     if explore_text:\n2017|         # Prefer explored evidence; keep a short keyword pack as appendix.\n2018|         extra = (pack or {}).get(\"text\") or \"\""
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_project_overview",
+          "lines": "1573-1616",
+          "text": "1573| def build_project_overview(workspace: str | Path | None, max_chars: int | None = None) -> str:\n1574|     limit = max_chars if max_chars is not None else config.PLANNER_OVERVIEW_MAX_CHARS\n1575|     try:\n1576|         root = resolve_workspace_root(\n1577|             workspace if workspace is not None else config.WORKSPACE_PATH\n1578|         )\n1579|     except SecurityError:\n1580|         return \"\"\n1581|     lines: list[str] = [f\"工作区：{root}\", \"目录结构（最多两层）：\"]\n1582|     try:\n1583|         entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))\n1584|     except OSError:\n1585|         entries = []"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounding",
+          "lines": "1992-2003",
+          "text": "1992| def build_grounding(goal: str, workspace: str | Path | None,\n1993|                     max_chars: int | None = None) -> dict[str, Any] | None:\n1994|     \"\"\"Return the grounding pack dict, or None when disabled / failed.\"\"\"\n1995|     if not config.PLANNER_GROUNDING:\n1996|         return None\n1997|     try:\n1998|         from app.planner.context import build_grounding_pack\n1999|         root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)\n2000|         limit = max_chars if max_chars is not None else config.PLANNER_CONTEXT_MAX_CHARS\n2001|         return build_grounding_pack(goal, root, max_chars=limit)\n2002|     except Exception:  # noqa: BLE001 — grounding is best-effort; fall back to overview\n2003|         return None"
+        }
+      ],
+      "test_command": "pytest tests/test_planner_grounding.py::test_rank_and_pack",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:给定同一 goal/workspace/max_subtasks/clauses 参数 | 期望:build_grounded_planner_messages 返回的 messages 与 grounding 与重构前逐字段一致 | 测试:pytest tests/test_planner_grounding.py::test_rank_and_pack | 边界:PLANNER_GROUNDING=False 时 grounding 为 None 且 messages 不含 grounding 前缀",
+        "前提:给定非法 workspace 触发 SecurityError | 期望:统一入口返回空 overview 且 grounding 为 None，不抛异常 | 测试:pytest tests/test_planner_grounding.py | 边界:workspace 为 None 时回退 config.WORKSPACE_PATH"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "校验规划质量与 API 层未受合并影响",
+      "kind": "analyze",
+      "files": [
+        "app/planner/quality.py",
+        "app/main.py",
+        "app/project_context.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/planner/quality.py",
+          "symbol": "enforce_plan_quality",
+          "line": 101,
+          "reason": "确认不依赖被合并函数",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/planner/quality.py",
+          "symbol": "build_handoff_packets",
+          "line": 244,
+          "reason": "确认不依赖被合并函数",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "line": 616,
+          "reason": "确认 API 层未受影响",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/project_context.py",
+          "symbol": "ProjectContext",
+          "line": 100,
+          "reason": "确认缓存行为未受影响",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/planner/quality.py",
+          "symbol": "enforce_plan_quality",
+          "lines": "101-216",
+          "text": "101| def enforce_plan_quality(\n102|     specs: list[dict[str, Any]],\n103|     goal: str,\n104|     workspace: str | Path | None,\n105|     *,\n106|     index: RepoIndex | None = None,\n107|     strict: bool = True,\n108| ) -> list[str]:\n109|     \"\"\"Validate plan quality. Raises ValueError (PlanError) when strict and gates fail.\n110|     Returns warning list when not strict.\"\"\"\n111|     from app.engine.planning import PlanError\n112|     from app.tools.security import resolve_workspace_root\n113| "
+        },
+        {
+          "path": "app/planner/quality.py",
+          "symbol": "build_handoff_packets",
+          "lines": "244-297",
+          "text": "244| def build_handoff_packets(\n245|     specs: list[dict[str, Any]],\n246|     workspace: str | Path,\n247|     index: RepoIndex | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     root = Path(workspace)\n250|     idx = index or build_index(root)\n251|     packets = []\n252|     for s in specs:\n253|         files = [str(p).replace(\"\\\\\", \"/\").lstrip(\"./\") for p in (s.get(\"write_scope\") or [])]\n254|         for t in s.get(\"targets\") or []:\n255|             if isinstance(t, dict) and t.get(\"path\"):\n256|                 files.append(str(t[\"path\"]).replace(\"\\\\\", \"/\").lstrip(\"./\"))"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "lines": "616-623",
+          "text": "616| def list_plan_versions(run_id: str):\n617|     \"\"\"Append-only plan history (summaries, oldest first).\"\"\"\n618|     _run_or_404(run_id)\n619|     plan = storage.get_plan(run_id) or {}\n620|     return {\"run_id\": run_id, \"current_version\": plan.get(\"version\"),\n621|             \"current_revision\": plan.get(\"revision\"),\n622|             \"goal\": plan.get(\"goal\"), \"goal_clauses\": plan.get(\"goal_clauses\") or [],\n623|             \"versions\": storage.list_plan_versions(run_id)}"
+        }
+      ],
+      "test_command": "pytest tests/test_planner_phase2.py::test_handoff_packets",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:给定合并后的 planning.py | 期望:quality.py 与 main.py 的导入与调用链无断裂，ProjectContext 缓存测试仍通过 | 测试:pytest tests/test_planner_phase2.py::test_handoff_packets | 边界:若发现隐式依赖，需在报告中列出并回填到子任务 2"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "运行回归测试验证 workflow 行为不变",
+      "kind": "verify",
+      "files": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "line": 2006,
+          "reason": "验证合并后输出等价",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "build_workflow",
+          "line": 1531,
+          "reason": "验证 workflow 行为不变",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "lines": "2006-2034",
+          "text": "2006| def build_grounded_planner_messages(\n2007|     goal: str, workspace: str | Path | None, max_subtasks: int,\n2008|     clauses: list[dict[str, str]] | None = None,\n2009|     *,\n2010|     phase2: bool = False,\n2011|     explore_text: str | None = None,\n2012| ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:\n2013|     overview = build_project_overview(workspace)\n2014|     pack = build_grounding(goal, workspace)\n2015|     ground = None\n2016|     if explore_text:\n2017|         # Prefer explored evidence; keep a short keyword pack as appendix.\n2018|         extra = (pack or {}).get(\"text\") or \"\""
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "build_workflow",
+          "lines": "1531-1572",
+          "text": "1531| def build_workflow():\n1532|     g = StateGraph(WorkflowState)\n1533|     g.add_node(\"decompose\", decompose_node)\n1534|     g.add_node(\"await_plan_approval\", await_plan_approval_node)\n1535|     g.add_node(\"pick_next\", pick_next_node)\n1536|     g.add_node(\"await_subtask_confirmation\", await_subtask_confirmation_node)\n1537|     g.add_node(\"execute_subtask\", execute_subtask_node)\n1538|     g.add_node(\"verify_subtask\", verify_subtask_node)\n1539|     g.add_node(\"replan\", replan_node)\n1540|     g.add_node(\"final_verify\", final_verify_node)\n1541|     g.add_node(\"finish\", finish_node)\n1542|     g.add_node(\"fail\", fail_node)\n1543|     g.add_node(\"needs_attention\", needs_attention_node)"
+        }
+      ],
+      "test_command": "pytest tests/test_planner_grounding.py tests/test_planner_phase2.py tests/test_workflow.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:合并已完成 | 期望:规划与 workflow 相关测试全部通过 | 测试:pytest tests/test_planner_grounding.py tests/test_planner_phase2.py tests/test_workflow.py | 边界:PLANNER_GROUNDING 关闭与开启两种配置均需覆盖",
+        "前提:合并已完成 | 期望:ProjectContext 缓存相关测试通过 | 测试:pytest tests/test_project_context.py | 边界:跨 run 复用与文件修改失效缓存"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "error",
+    "issues": [
+      "计划不是合法 JSON：Extra data: line 1 column 18467 (char 18466)"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/planner/context.py",
+      "app/planner/quality.py",
+      "app/project_context.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:build_grounded_planner_messages",
+      "app/engine/planning.py:build_grounding",
+      "app/engine/planning.py:build_planner_messages",
+      "app/engine/planning.py:build_project_overview",
+      "app/engine/workflow.py:MemoryPlanStore",
+      "app/engine/workflow.py:StoragePlanStore",
+      "app/engine/workflow.py:_generate_specs",
+      "app/engine/workflow.py:build_grounded_planner_messages",
+      "app/engine/workflow.py:build_workflow",
+      "app/engine/workflow.py:workflow",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/planner/context.py:build_grounding_pack",
+      "app/planner/quality.py:build_handoff_packets",
+      "app/planner/quality.py:enforce_plan_quality"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 47
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "build_grounded_planner_messages",
+          "max_lines": 60
+        },
+        "chars": 1534
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "build_grounded_planner_messages",
+          "limit": 20
+        },
+        "chars": 641
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "max_lines": 40,
+          "path": "app/engine/workflow.py",
+          "symbol": "build_grounded_planner_messages"
+        },
+        "chars": 568
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "limit": 20,
+          "query": "build_project_overview|build_grounding"
+        },
+        "chars": 44
+      }
+    ],
+    "extra_round": {
+      "wanted": [
+        "build_project_overview",
+        "build_grounding",
+        "build_grounded_planner_messages",
+        "build_planner_messages",
+        "build_grounding_pack",
+        "build_workflow"
+      ],
+      "new_ids": []
+    }
+  },
+  "errors": [
+    "证据绑定失败：子任务 1 target app/engine/planning.py:build_project_overview 缺少 evidence_id；子任务 1 target app/engine/planning.py:build_grounding 缺少 evidence_id；子任务 1 target app/engine/planning.py:build_grounded_planner_messages 缺少 evidence_id；子任务 1 target app/engine/planning.py:build_planner_messages 缺少 evidence_id；子任务 1 target app/planner/context.py:build_grounding_pack 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_project_overview 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_grounding 缺少 evidence_id；子任务 3 target app/engine/planning.py:build_grounded_planner_messages 缺少 evidence_id；子任务 4 target app/engine/planning.py:build_grounded_planner_messages 缺少 evidence_id；子任务 4 target app/engine/workflow.py:build_workflow 缺少 evidence_id",
+    "证据绑定失败：coverage 缺少证据文件 app/planner/quality.py 的角色；coverage 缺少证据文件 app/main.py 的角色",
+    "证据绑定失败：coverage 缺少证据文件 app/project_context.py 的角色",
+    "证据绑定失败：子任务 1 target app/engine/planning.py:build_project_overview 缺少 evidence_id；子任务 1 target app/engine/planning.py:build_grounding 缺少 evidence_id；子任务 1 target app/engine/planning.py:build_grounded_planner_messages 缺少 evidence_id；子任务 1 target app/planner/context.py:build_grounding_pack 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_grounded_planner_messages 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_project_overview 缺少 evidence_id；子任务 2 target app/engine/planning.py:build_grounding 缺少 evidence_id；子任务 3 target app/planner/quality.py:enforce_plan_quality 缺少 evidence_id；子任务 3 target app/planner/quality.py:build_handoff_packets 缺少 evidence_id；子任务 3 target app/main.py:list_plan_versions 缺少 evidence_id"
+  ],
+  "usage": {
+    "prompt_tokens": 46920,
+    "completion_tokens": 17186,
+    "total_tokens": 64106
+  },
+  "cost_usd": 0.020356
+}

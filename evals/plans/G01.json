@@ -1,0 +1,118 @@
+{
+  "goal": "规划器拆解任务时 write_scope 重叠检测对 glob 判断不准，修复 check_write_scopes 并补充测试",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析 check_write_scopes 与 glob 重叠判定缺陷",
+      "description": "只读分析 app/engine/planning.py 的 check_write_scopes（L285-309）与 app/write_scope.py 的 patterns_overlap/scopes_overlap/_intersect/_seg_overlap（L129-164），复现 glob 判断不准的具体场景（如 'src/**' vs 'src/a.py'、'**/*.py' vs 'app/**'、目录前缀 'app' vs 'app/**'、大小写/分隔符归一化、'*' 与 '**' 语义差异），并核对 tests/test_plan_traceability.py 与 tests/test_write_scope.py 现有断言，列出需要修复的判定点与新增测试用例清单。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "输出至少 3 个可复现的 glob 重叠误判/漏判场景，每个附带具体 pattern 对与期望结果",
+        "明确指出缺陷位于 check_write_scopes 还是 write_scope.patterns_overlap/scopes_overlap，并给出调用链证据（文件:行号）",
+        "列出拟新增的测试用例名称与所在测试文件"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 write_scope 的 glob 重叠判定",
+      "description": "修改 app/write_scope.py 中 patterns_overlap/scopes_overlap 及其辅助函数（_expand/_seg_match/_match/_intersect/_seg_overlap），使 glob 重叠判定与 path_in_pattern 的匹配语义一致：目录前缀覆盖子树、'**' 跨段匹配、'*' 不跨段、分隔符与大小写归一化。保持公共 API 签名不变，避免影响 WriteScope 与工具层调用方。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "patterns_overlap 对分析阶段列出的每个场景返回期望结果",
+        "patterns_overlap(a, b) == patterns_overlap(b, a) 对测试用例成立",
+        "path_in_pattern 与 patterns_overlap 语义一致：若 path_in_pattern(a, p) 且 path_in_pattern(b, p) 则 patterns_overlap(a, b) 为真",
+        "ruff check app/write_scope.py 通过"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/write_scope.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "修复 check_write_scopes 使用统一重叠判定",
+      "description": "修改 app/engine/planning.py 的 check_write_scopes（L285-309），确保其重叠检测统一走 app/write_scope.py 的 scopes_overlap，正确处理空 scope、modify 必填校验、依赖路径（_ancestors）豁免逻辑，并保证错误信息包含冲突子任务 id 与冲突 pattern。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "check_write_scopes 对重叠且无依赖路径的 modify 子任务抛出 PlanError，消息含两个子任务 id 与冲突 pattern",
+        "存在任一方向依赖路径时不报错",
+        "空 write_scope 的 modify 仍被拒绝，analyze/verify 不受影响",
+        "ruff check app/engine/planning.py 通过"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充 glob 重叠与 check_write_scopes 测试",
+      "description": "在 tests/test_write_scope.py 增加 patterns_overlap/scopes_overlap 的 glob 边界用例（目录前缀、'**'、'*'、分隔符、大小写、对称性）；在 tests/test_plan_traceability.py 增加 check_write_scopes 的 glob 重叠用例（重叠无依赖被拒、有依赖放行、不相交放行、空 scope 拒绝）。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖分析阶段列出的全部 glob 场景",
+        "新增测试在修复前失败、修复后通过（至少对 1 个关键用例验证）",
+        "测试文件符合 ruff line-length=100"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_write_scope.py",
+        "tests/test_plan_traceability.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行相关测试与静态检查验证",
+      "description": "运行 pytest tests/test_write_scope.py tests/test_plan_traceability.py 以及受 check_write_scopes 影响的 tests/test_edge_034.py，并运行 ruff check app/write_scope.py app/engine/planning.py tests/test_write_scope.py tests/test_plan_traceability.py，确认无回归。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest tests/test_write_scope.py tests/test_plan_traceability.py tests/test_edge_034.py 全部通过",
+        "ruff check 对修改文件无报错",
+        "测试输出中新增用例均显示 passed"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

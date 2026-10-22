@@ -1,0 +1,94 @@
+{
+  "goal": "在 API 中新增一个只读接口，返回当前计划的 grounding_warnings",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析 grounding_warnings 的产生与存储路径",
+      "description": "只读分析：阅读 app/engine/planning.py:check_plan_grounding、app/engine/workflow.py:_attach_grounding_warnings 与 _generate_specs、app/storage.py:get_plan/save_plan，确认 grounding_warnings 写入 plan 字典的时机与持久化位置（plan JSON 字段），并确认 app/main.py 现有只读计划接口（_plan_or_404、list_plan_versions、get_plan_version）的鉴权与返回风格，作为新接口的模板。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确说明 grounding_warnings 在 plan 字典中的键名、写入条件（source=='llm' 且非空）与截断上限（20 条）",
+        "列出 app/main.py 中可复用的只读接口模式（require_token 依赖、_run_or_404/_plan_or_404、404 处理）",
+        "给出新接口建议的路径与响应结构（run_id、grounding_warnings 列表、可选 notes）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "在 app/main.py 新增只读 grounding_warnings 接口",
+      "description": "在 app/main.py 中新增 GET /runs/{run_id}/plan/grounding-warnings（只读），复用 require_token 与 _run_or_404/_plan_or_404；从 storage.get_plan(run_id) 读取 plan，返回 {\"run_id\": ..., \"grounding_warnings\": plan.get(\"grounding_warnings\") or [], \"notes\": ...}；计划不存在时 404，无警告时返回空列表而非报错。不改动现有接口。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增路由为 GET 且无任何写操作（不调用 save_plan/update_run_state）",
+        "run 不存在返回 404，plan 不存在返回 404，无 grounding_warnings 时返回 200 与空列表",
+        "响应包含 run_id 与 grounding_warnings 字段，且不泄露其他敏感信息"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/main.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "为新接口补充 API 测试",
+      "description": "在 tests/test_api.py（或新建 tests/test_plan_grounding_api.py）中补充测试：构造带 grounding_warnings 的 plan 后调用新接口断言返回内容；覆盖无警告、run 不存在、plan 不存在、缺少 token 四种情况。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "测试覆盖有警告/无警告/404/鉴权四类场景",
+        "测试使用现有 conftest 的 client 与临时 DB fixture，不依赖真实网络"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_api.py",
+        "tests/test_plan_grounding_api.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查验证",
+      "description": "运行 pytest tests/test_api.py tests/test_plan_grounding_api.py tests/test_planner_grounding.py 以及 ruff check app/main.py tests/，确认新接口不破坏既有行为。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 相关用例全部通过",
+        "ruff check 无新增告警",
+        "验证过程中未修改 app/ 下除 app/main.py 之外的文件"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [
+    "子任务 4: 描述中提到的文件 tests/test_plan_grounding_api.py 不存在"
+  ]
+}

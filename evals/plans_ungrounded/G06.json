@@ -1,0 +1,95 @@
+{
+  "goal": "在 API 中新增一个只读接口，返回当前计划的 grounding_warnings",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位计划与 grounding_warnings 的数据来源及现有 API 路由",
+      "description": "只读分析：在 app/main.py 中查看现有 FastAPI 路由与依赖注入方式；在 app/schemas.py、app/storage.py、app/planner/ 中确认「当前计划」如何被标识（plan_id / 最新版本 / 任务关联）以及 grounding_warnings 字段存放位置与类型；在 tests/test_api.py 中查看现有 API 测试的客户端与 fixture 写法。产出：需要新增的端点路径、请求参数、响应模型字段、数据读取函数的具体清单。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确指出 grounding_warnings 的存储位置与读取入口（文件+函数名）",
+        "明确指出「当前计划」的判定方式（plan_id 参数或最新版本）",
+        "给出拟新增端点的路径、方法、响应字段与错误码（如计划不存在返回 404）",
+        "列出可复用的现有测试 fixture 名称"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新增只读接口返回当前计划的 grounding_warnings",
+      "description": "在 app/main.py 中新增只读 GET 端点（路径与参数按子任务 1 的结论），复用现有 storage/planner 读取逻辑获取当前计划的 grounding_warnings；如需响应模型则在 app/schemas.py 中新增 Pydantic 模型。不修改任何写入路径，不引入副作用。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增端点仅使用 GET 且不产生任何写操作",
+        "响应包含 grounding_warnings 列表（无警告时为空列表而非 null）",
+        "计划不存在时返回 404 且响应体为结构化错误",
+        "代码通过 ruff 检查（line-length 100）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/main.py",
+        "app/schemas.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "为新增接口补充 API 测试",
+      "description": "在 tests/test_api.py 中新增测试：覆盖有 grounding_warnings 的计划、无警告的计划（空列表）、计划不存在（404）三种情况，复用现有 TestClient fixture。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增至少 3 个测试用例覆盖上述三种情况",
+        "测试断言响应状态码与 grounding_warnings 字段内容",
+        "测试不依赖外部网络"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_api.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行测试与静态检查验证",
+      "description": "运行 pytest tests/test_api.py 与 ruff check app tests，确认新增接口与测试全部通过且无回归。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest tests/test_api.py 全部通过",
+        "ruff check app tests 无新增告警",
+        "测试输出中可见新增用例被执行"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

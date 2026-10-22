@@ -1,0 +1,1134 @@
+{
+  "goal": "并行执行时 launchable_subtasks 可能同时启动 write_scope 重叠的子任务，修复并加并发测试",
+  "task_type": "bugfix",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析 launchable_subtasks 的 write_scope 重叠缺陷",
+      "description": "阅读 app/engine/planning.py:launchable_subtasks（EV1）与 ready_subtasks（EV4），确认当前调度只按 in_flight/capacity/exclude 过滤，未用 scopes_overlap（EV3）排除与在飞子任务 write_scope 重叠的候选；核对 app/engine/workflow.py:pick_next_node（EV2）如何调用它、RunContext.in_flight（EV14）提供什么信息。产出：需新增的过滤规则（与任一 in_flight 子任务 scope 重叠即不可启动）及是否需在 pick_next_node 侧补充。不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读上述四个符号的实现 | 期望:给出明确的过滤规则（与任一 in_flight 子任务 scopes_overlap 的候选被排除）及需修改的函数与参数签名 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:空 write_scope（analyze/verify）不应与任何 scope 重叠，仍可并行"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "reason": "缺陷所在：候选筛选未考虑 write_scope 互斥",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "ready_subtasks",
+          "reason": "提供 ready 集合，需确认其不承担 scope 过滤",
+          "evidence_ref": "EV4",
+          "evidence_id": "EV4",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap",
+          "reason": "应复用的重叠判定函数",
+          "evidence_ref": "EV3",
+          "evidence_id": "EV3",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "reason": "调用方，需确认传入的 in_flight 与 plan 数据足以做 scope 判定",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "在 launchable_subtasks 中排除 write_scope 重叠候选",
+      "description": "修改 app/engine/planning.py:launchable_subtasks：在现有 in_flight/capacity/exclude 过滤基础上，用 app/write_scope.py:scopes_overlap 排除与任一 in_flight 子任务 write_scope 重叠的候选（空 scope 视为不重叠，保持 analyze/verify 可并行）。从 plan 中按 id 取出 in_flight 子任务的 write_scope；若 in_flight 中的 id 在 plan 中缺失则保守跳过该候选。保持函数签名向后兼容，不改变返回结构。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:plan 中有两个 ready 子任务 A、B，write_scope 重叠，A 已在 in_flight，capacity>=2 | 期望:launchable_subtasks 返回结果不含 B | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:A 的 write_scope 为空时 B 仍可启动；in_flight 为空时行为与修改前一致",
+        "前提:两个 ready 子任务 write_scope 不重叠且 capacity>=2 | 期望:两者都被返回，可并行 | 测试:pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel | 边界:MAX_PARALLEL=1 时仍严格串行"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "reason": "加入 write_scope 互斥过滤，修复并行启动重叠子任务",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "新增并发重叠 write_scope 的回归测试",
+      "description": "在 tests/test_parallel.py 中新增测试函数（文件已存在，新建测试函数）：构造两个 ready 且 write_scope 重叠的子任务，capacity>=2，断言 launchable_subtasks 只返回一个；再模拟其中一个在飞后断言另一个不被启动；并补充一个空 scope 子任务可与有 scope 子任务并行的用例。复用现有 test_parallel.py 的 plan 构造辅助（如存在），不修改生产代码。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:两个 ready 子任务 write_scope 均为 ['app/engine/planning.py']，capacity=2，in_flight 为空 | 期望:launchable_subtasks 只返回其中一个（不并行启动重叠任务） | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:in_flight 含其中一个后，另一个仍不被返回",
+        "前提:一个子任务 write_scope 为空、另一个为 ['app/engine/planning.py']，capacity=2 | 期望:两者均可启动（空 scope 不重叠） | 测试:pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel | 边界:MAX_PARALLEL=1 时仍严格串行"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_parallel.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "reason": "现有并行调度测试，新增重叠 scope 用例与之同文件同风格",
+          "evidence_ref": "EV18",
+          "evidence_id": "EV18",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "验证 write_scope 工具层互斥未被破坏",
+      "description": "运行现有 write_scope 相关测试，确认调度层修复未影响工具层强制写入范围（WriteScope 拒绝越界写入、证据记录）。仅执行测试，不改代码。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已应用子任务 2 的修改 | 期望:write_scope 工具层测试全部通过，无回归 | 测试:pytest tests/test_write_scope.py::test_write_inside_scope_succeeds_outside_rejected_with_evidence | 边界:越界写入仍被拒绝且记录 violations",
+        "前提:已应用子任务 2 的修改 | 期望:并行调度测试全部通过 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:MAX_PARALLEL=1 严格串行用例仍通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+          "reason": "回归：范围内写入成功、范围外被拒并留证据",
+          "evidence_ref": "EV20",
+          "evidence_id": "EV20",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "reason": "回归：调度层 in_flight 与 scope 过滤",
+          "evidence_ref": "EV18",
+          "evidence_id": "EV18",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C2"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/engine/planning.py",
+      "role": "modify",
+      "reason": "launchable_subtasks 需加入 write_scope 互斥过滤",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "app/write_scope.py",
+      "role": "read",
+      "reason": "复用 scopes_overlap 做重叠判定，不修改",
+      "evidence_id": "EV3"
+    },
+    {
+      "path": "app/engine/workflow.py",
+      "role": "read",
+      "reason": "pick_next_node 为调用方，确认 in_flight 数据来源，不修改",
+      "evidence_id": "EV2"
+    },
+    {
+      "path": "tests/test_parallel.py",
+      "role": "modify",
+      "reason": "新增并发重叠 write_scope 回归测试",
+      "evidence_id": "EV18"
+    },
+    {
+      "path": "tests/test_write_scope.py",
+      "role": "verify",
+      "reason": "回归验证工具层写入范围强制未被破坏",
+      "evidence_id": "EV20"
+    },
+    {
+      "path": "app/write_guard.py",
+      "role": "not-needed",
+      "reason": "写入事务/冲突检测在工具层，本次修复仅涉及调度层候选筛选，不触碰 WriteTransaction 与 WriteConflict",
+      "evidence_id": "EV12"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/planning.py",
+      "symbol": "launchable_subtasks",
+      "kind": "definition",
+      "line_start": 797,
+      "line_end": 841,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/workflow.py",
+      "symbol": "pick_next_node",
+      "kind": "definition",
+      "line_start": 736,
+      "line_end": 812,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/write_scope.py",
+      "symbol": "scopes_overlap",
+      "kind": "definition",
+      "line_start": 162,
+      "line_end": 164,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/engine/planning.py",
+      "symbol": "ready_subtasks",
+      "kind": "definition",
+      "line_start": 766,
+      "line_end": 779,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/engine/planning.py",
+      "symbol": "SubtaskSpec._scope",
+      "kind": "definition",
+      "line_start": 175,
+      "line_end": 179,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/engine/planning.py",
+      "symbol": "SubtaskSpec",
+      "kind": "definition",
+      "line_start": 129,
+      "line_end": 235,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/write_scope.py",
+      "symbol": "WriteScope",
+      "kind": "definition",
+      "line_start": 176,
+      "line_end": 234,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/write_scope.py",
+      "symbol": "ScopeError",
+      "kind": "definition",
+      "line_start": 37,
+      "line_end": 38,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/write_scope.py",
+      "symbol": "dir_in_scope",
+      "kind": "definition",
+      "line_start": 111,
+      "line_end": 126,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/write_guard.py",
+      "symbol": "WriteGuardError",
+      "kind": "definition",
+      "line_start": 59,
+      "line_end": 60,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "app/write_guard.py",
+      "symbol": "WriteConflict",
+      "kind": "definition",
+      "line_start": 63,
+      "line_end": 64,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "app/write_guard.py",
+      "symbol": "WriteTransaction",
+      "kind": "definition",
+      "line_start": 201,
+      "line_end": 230,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "app/engine/workflow.py",
+      "symbol": "execute_subtask_node",
+      "kind": "definition",
+      "line_start": 1074,
+      "line_end": 1092,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "app/engine/workflow.py",
+      "symbol": "RunContext",
+      "kind": "definition",
+      "line_start": 222,
+      "line_end": 315,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "app/engine/workflow.py",
+      "symbol": "SubtaskRecorder",
+      "kind": "definition",
+      "line_start": 322,
+      "line_end": 454,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "app/engine/planning.py",
+      "symbol": "check_write_scopes",
+      "kind": "definition",
+      "line_start": 325,
+      "line_end": 349,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "app/engine/planning.py",
+      "symbol": "migrate_legacy_write_scopes",
+      "kind": "definition",
+      "line_start": 687,
+      "line_end": 749,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+      "kind": "test",
+      "line_start": 138,
+      "line_end": 148,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_executor_rejects_out_of_scope_write_without_asking",
+      "kind": "test",
+      "line_start": 163,
+      "line_end": 177,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 80,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_scope_rejects_absolute_and_parent_paths",
+      "kind": "test",
+      "line_start": 38,
+      "line_end": 40,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_two_non_overlapping_subtasks_run_in_parallel",
+      "kind": "test",
+      "line_start": 101,
+      "line_end": 122,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_max_parallel_one_is_strictly_serial",
+      "kind": "test",
+      "line_start": 151,
+      "line_end": 157,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_modify_with_empty_write_scope_rejected",
+      "kind": "test",
+      "line_start": 53,
+      "line_end": 55,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "tests/test_planner_explore.py",
+      "symbol": "test_verify_cannot_have_write_scope",
+      "kind": "test",
+      "line_start": 109,
+      "line_end": 116,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "test_subtask_spec_accepts_structured_acceptance_and_targets",
+      "kind": "test",
+      "line_start": 98,
+      "line_end": 106,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_edge_034.py",
+      "symbol": "test_run_command_always_scratch_when_scoped",
+      "kind": "test",
+      "line_start": 162,
+      "line_end": 179,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_readonly_subtask_refuses_write_command_before_start",
+      "kind": "test",
+      "line_start": 159,
+      "line_end": 174,
+      "supports": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_cancel_kills_running_command",
+      "kind": "test",
+      "line_start": 187,
+      "line_end": 215,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_edge_036.py",
+      "symbol": "test_readonly_refuses_networky_without_approval",
+      "kind": "test",
+      "line_start": 64,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_limits_opt.py",
+      "symbol": "test_run_project_command_pytest_uses_scratch",
+      "kind": "test",
+      "line_start": 83,
+      "line_end": 102,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_write_scope.py",
+      "symbol": "_ctx",
+      "kind": "test",
+      "line_start": 61,
+      "line_end": 64,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_ruff_fix_inside_scope_passes_scope_check",
+      "kind": "test",
+      "line_start": 132,
+      "line_end": 137,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_late_result_from_superseded_attempt_is_discarded",
+      "kind": "test",
+      "line_start": 311,
+      "line_end": 351,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_result_never_writes_any_outcome",
+      "kind": "test",
+      "line_start": 359,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_recorder_cannot_persist_state_or_status",
+      "kind": "test",
+      "line_start": 417,
+      "line_end": 461,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "tests/test_parallel.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 141,
+      "line_end": 141,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "app/engine/workflow.py",
+      "symbol": "pick_next_node",
+      "kind": "caller",
+      "line_start": 736,
+      "line_end": 812,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "app/engine/workflow.py",
+      "symbol": "_start_subtask",
+      "kind": "caller",
+      "line_start": 835,
+      "line_end": 975,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "app/write_scope.py",
+      "symbol": "normalize_pattern",
+      "kind": "caller",
+      "line_start": 41,
+      "line_end": 56,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "app/write_scope.py",
+      "symbol": "WriteScope.check_command_writes",
+      "kind": "caller",
+      "line_start": 219,
+      "line_end": 230,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "app/write_guard.py",
+      "symbol": "inspect",
+      "kind": "caller",
+      "line_start": 130,
+      "line_end": 153,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "app/write_guard.py",
+      "symbol": "check_shrink_guard",
+      "kind": "caller",
+      "line_start": 177,
+      "line_end": 192,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "app/write_guard.py",
+      "symbol": "_read_manifest",
+      "kind": "caller",
+      "line_start": 239,
+      "line_end": 243,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "app/write_guard.py",
+      "symbol": "_find_tx",
+      "kind": "caller",
+      "line_start": 410,
+      "line_end": 419,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "app/write_guard.py",
+      "symbol": "rollback",
+      "kind": "caller",
+      "line_start": 432,
+      "line_end": 518,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "app/write_guard.py",
+      "symbol": "check_expected_version",
+      "kind": "caller",
+      "line_start": 156,
+      "line_end": 174,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "app/write_guard.py",
+      "symbol": "commit",
+      "kind": "caller",
+      "line_start": 329,
+      "line_end": 387,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "app/write_guard.py",
+      "symbol": "prepare",
+      "kind": "caller",
+      "line_start": 255,
+      "line_end": 301,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "app/engine/workflow.py",
+      "symbol": "run_workflow",
+      "kind": "caller",
+      "line_start": 1609,
+      "line_end": 1661,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "app/engine/planning.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 797,
+      "line_end": 797,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "app/engine/workflow.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 777,
+      "line_end": 777,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "分析 launchable_subtasks 的 write_scope 重叠缺陷",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/write_scope.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "line": 797,
+          "reason": "缺陷所在：候选筛选未考虑 write_scope 互斥",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "ready_subtasks",
+          "line": 766,
+          "reason": "提供 ready 集合，需确认其不承担 scope 过滤",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap",
+          "line": 162,
+          "reason": "应复用的重叠判定函数",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "line": 736,
+          "reason": "调用方，需确认传入的 in_flight 与 plan 数据足以做 scope 判定",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "lines": "797-841",
+          "text": "797| def launchable_subtasks(\n798|     plan: dict[str, Any],\n799|     in_flight: set[str],\n800|     capacity: int,\n801|     *,\n802|     exclude: set[str] | None = None,\n803| ) -> list[dict[str, Any]]:\n804|     \"\"\"Subtasks the parallel scheduler may start now.\n805| \n806|     Candidates are ``running`` subtasks not in flight in this process (crash\n807|     recovery / restart) followed by ready ``pending`` ones, in topological\n808|     order. A candidate is taken only if its write_scope overlaps neither a\n809|     subtask in flight nor one already chosen in this batch; overlapping ones"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "ready_subtasks",
+          "lines": "766-779",
+          "text": "766| def ready_subtasks(plan: dict[str, Any]) -> list[dict[str, Any]]:\n767|     \"\"\"All pending subtasks whose dependencies succeeded (DAG ready set).\n768| \n769|     Independent ready subtasks MAY run in parallel; v1 of the control loop\n770|     still picks one at a time, but the data model is a real DAG.\n771|     \"\"\"\n772|     finished = done_ids(plan)\n773|     ready: list[dict[str, Any]] = []\n774|     for s in plan.get(\"subtasks\", []):\n775|         if s.get(\"status\") != SUBTASK_PENDING:\n776|             continue\n777|         if all(d in finished for d in s.get(\"depends_on\", [])):\n778|             ready.append(s)"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap",
+          "lines": "162-164",
+          "text": "162| def scopes_overlap(a: list[str] | None, b: list[str] | None) -> bool:\n163|     \"\"\"Could any path be written by both scopes? Empty scope never overlaps.\"\"\"\n164|     return any(patterns_overlap(x, y) for x in (a or []) for y in (b or []))"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读上述四个符号的实现 | 期望:给出明确的过滤规则（与任一 in_flight 子任务 scopes_overlap 的候选被排除）及需修改的函数与参数签名 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:空 write_scope（analyze/verify）不应与任何 scope 重叠，仍可并行"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "在 launchable_subtasks 中排除 write_scope 重叠候选",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "line": 797,
+          "reason": "加入 write_scope 互斥过滤，修复并行启动重叠子任务",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "lines": "797-841",
+          "text": "797| def launchable_subtasks(\n798|     plan: dict[str, Any],\n799|     in_flight: set[str],\n800|     capacity: int,\n801|     *,\n802|     exclude: set[str] | None = None,\n803| ) -> list[dict[str, Any]]:\n804|     \"\"\"Subtasks the parallel scheduler may start now.\n805| \n806|     Candidates are ``running`` subtasks not in flight in this process (crash\n807|     recovery / restart) followed by ready ``pending`` ones, in topological\n808|     order. A candidate is taken only if its write_scope overlaps neither a\n809|     subtask in flight nor one already chosen in this batch; overlapping ones"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:plan 中有两个 ready 子任务 A、B，write_scope 重叠，A 已在 in_flight，capacity>=2 | 期望:launchable_subtasks 返回结果不含 B | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:A 的 write_scope 为空时 B 仍可启动；in_flight 为空时行为与修改前一致",
+        "前提:两个 ready 子任务 write_scope 不重叠且 capacity>=2 | 期望:两者都被返回，可并行 | 测试:pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel | 边界:MAX_PARALLEL=1 时仍严格串行"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "新增并发重叠 write_scope 的回归测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_parallel.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "line": 138,
+          "reason": "现有并行调度测试，新增重叠 scope 用例与之同文件同风格",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "lines": "138-148",
+          "text": "138| def test_launchable_respects_in_flight_and_unscoped_nodes():\n139|     plan = _approved_plan([sub(\"1\", write_scope=[\"app/**\"]), sub(\"2\", write_scope=[\"docs\"]),\n140|                            sub(\"3\", write_scope=[\"app/x.py\"], deps=[\"1\"])])\n141|     ids = [s[\"id\"] for s in P.launchable_subtasks(plan, set(), 5)]\n142|     assert ids == [\"1\", \"2\"]\n143|     plan[\"subtasks\"][0][\"status\"] = P.SUBTASK_RUNNING\n144|     assert [s[\"id\"] for s in P.launchable_subtasks(plan, {\"1\"}, 5)] == [\"2\"]\n145|     # A pre-0.3.1 node without a write_scope key conflicts with everything.\n146|     del plan[\"subtasks\"][1][\"write_scope\"]\n147|     assert P.launchable_subtasks(plan, {\"1\"}, 5) == []\n148|     assert P.launchable_subtasks(plan, set(), 0) == []"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:两个 ready 子任务 write_scope 均为 ['app/engine/planning.py']，capacity=2，in_flight 为空 | 期望:launchable_subtasks 只返回其中一个（不并行启动重叠任务） | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:in_flight 含其中一个后，另一个仍不被返回",
+        "前提:一个子任务 write_scope 为空、另一个为 ['app/engine/planning.py']，capacity=2 | 期望:两者均可启动（空 scope 不重叠） | 测试:pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel | 边界:MAX_PARALLEL=1 时仍严格串行"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "验证 write_scope 工具层互斥未被破坏",
+      "kind": "verify",
+      "files": [
+        "tests/test_write_scope.py",
+        "tests/test_parallel.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+          "line": 67,
+          "reason": "回归：范围内写入成功、范围外被拒并留证据",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "line": 138,
+          "reason": "回归：调度层 in_flight 与 scope 过滤",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+          "lines": "67-80",
+          "text": "67| def test_write_inside_scope_succeeds_outside_rejected_with_evidence(tmp_path):\n68|     ctx = _ctx(tmp_path, [\"src/**\"])\n69|     write = get_tool(\"write_file\").handler\n70|     ok = write({\"path\": \"src/a.py\", \"content\": \"x = 1\\n\"}, ctx)\n71|     assert ok.get(\"ok\", True) and not ok.get(\"error\"), ok\n72|     assert (tmp_path / \"src/a.py\").read_text(encoding=\"utf-8\") == \"x = 1\\n\"\n73|     bad = write({\"path\": \"other.py\", \"content\": \"y = 2\\n\"}, ctx)\n74|     assert \"write_scope\" in str(bad) or \"写入范围\" in str(bad)\n75|     assert not (tmp_path / \"other.py\").exists()\n76|     violations = ctx.write_scope.snapshot_violations()\n77|     assert len(violations) == 1\n78|     v = violations[0]\n79|     assert v[\"type\"] == \"scope_violation\" and v[\"path\"] == \"other.py\""
+        },
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "lines": "138-148",
+          "text": "138| def test_launchable_respects_in_flight_and_unscoped_nodes():\n139|     plan = _approved_plan([sub(\"1\", write_scope=[\"app/**\"]), sub(\"2\", write_scope=[\"docs\"]),\n140|                            sub(\"3\", write_scope=[\"app/x.py\"], deps=[\"1\"])])\n141|     ids = [s[\"id\"] for s in P.launchable_subtasks(plan, set(), 5)]\n142|     assert ids == [\"1\", \"2\"]\n143|     plan[\"subtasks\"][0][\"status\"] = P.SUBTASK_RUNNING\n144|     assert [s[\"id\"] for s in P.launchable_subtasks(plan, {\"1\"}, 5)] == [\"2\"]\n145|     # A pre-0.3.1 node without a write_scope key conflicts with everything.\n146|     del plan[\"subtasks\"][1][\"write_scope\"]\n147|     assert P.launchable_subtasks(plan, {\"1\"}, 5) == []\n148|     assert P.launchable_subtasks(plan, set(), 0) == []"
+        }
+      ],
+      "test_command": "pytest tests/test_write_scope.py::test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:已应用子任务 2 的修改 | 期望:write_scope 工具层测试全部通过，无回归 | 测试:pytest tests/test_write_scope.py::test_write_inside_scope_succeeds_outside_rejected_with_evidence | 边界:越界写入仍被拒绝且记录 violations",
+        "前提:已应用子任务 2 的修改 | 期望:并行调度测试全部通过 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:MAX_PARALLEL=1 严格串行用例仍通过"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务2的 write_scope 为目录级路径 app/engine/planning.py 是精确文件路径，合规；但子任务3的 write_scope 为 tests/test_parallel.py 且描述为“新增测试函数”，targets 却引用已存在的 test_launchable_respects_in_flight_and_unscoped_nodes 作为修改对象，语义矛盾：新增函数不应把已有测试函数列为 modify target，应明确新建函数名或改为在已有函数上扩展。",
+      "子任务3的验收标准测试目标仍指向 test_launchable_respects_in_flight_and_unscoped_nodes，但该测试是“新增重叠 scope 用例”，测试目标应为新增的测试函数名，否则无法验证新增用例。",
+      "子任务1为 analyze，但 targets 中 status=confirmed 的符号均真实存在，合规；然而 analyze 子任务不应包含 write_scope 为空数组以外的修改意图，当前描述“不改代码”合规。",
+      "子任务4为 verify，depends_on 仅含子任务2，但子任务3新增了测试，verify 应同时依赖子任务3以覆盖新增回归测试。",
+      "子任务2的验收标准第二条测试目标 test_two_non_overlapping_subtasks_run_in_parallel 与“空 scope 不重叠”边界未直接对应，边界用例缺少对应测试目标。",
+      "顶层缺少 coverage 字段，未给 app/engine/planning.py、app/engine/workflow.py、app/write_scope.py、app/write_guard.py 指定角色。",
+      "子任务2描述“若 in_flight 中的 id 在 plan 中缺失则保守跳过该候选”与验收标准未覆盖该边界，缺少对应 edge_case 测试目标。",
+      "子任务4 targets 引用 tests/test_write_scope.py 与 tests/test_parallel.py 的测试函数作为 verify 目标，但 verify 子任务不应把测试函数列为 modify 类 target；应改为在 acceptance_criteria 中引用测试，targets 可为空或仅引用被验证的生产符号。"
+    ],
+    "revised_coverage": [
+      {
+        "path": "app/engine/planning.py",
+        "role": "缺陷所在：launchable_subtasks 候选筛选未考虑 write_scope 互斥，需修改"
+      },
+      {
+        "path": "app/engine/workflow.py",
+        "role": "调用方：pick_next_node 传入 in_flight 与 plan，需确认数据足以做 scope 判定（只读分析）"
+      },
+      {
+        "path": "app/write_scope.py",
+        "role": "复用 scopes_overlap 做重叠判定（只读依赖）"
+      },
+      {
+        "path": "app/write_guard.py",
+        "role": "工具层写入强制范围，回归验证不被破坏（只读验证）"
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "子任务 3 声称 confirmed 的符号 test_launchable_excludes_overlapping_write_scope 在 tests/test_parallel.py 中不存在（改为 status=to-verify 或修正）"
+    ]
+  },
+  "explore": {
+    "budget_used": 5,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/write_guard.py",
+      "app/write_scope.py",
+      "tests/test_parallel.py",
+      "tests/test_write_scope.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:SubtaskSpec",
+      "app/engine/planning.py:SubtaskSpec._scope",
+      "app/engine/planning.py:_scope",
+      "app/engine/planning.py:launchable_subtasks",
+      "app/engine/planning.py:ready_subtasks",
+      "app/engine/workflow.py:RunContext",
+      "app/engine/workflow.py:SubtaskRecorder",
+      "app/engine/workflow.py:execute_subtask_node",
+      "app/engine/workflow.py:pick_next_node",
+      "app/write_guard.py:WriteConflict",
+      "app/write_guard.py:WriteGuardError",
+      "app/write_guard.py:WriteTransaction",
+      "app/write_scope.py:ScopeError",
+      "app/write_scope.py:WriteScope",
+      "app/write_scope.py:dir_in_scope",
+      "app/write_scope.py:scopes_overlap"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 38
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "max_lines": 60
+        },
+        "chars": 2201
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "max_lines": 60
+        },
+        "chars": 3290
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "max_lines": 40,
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap"
+        },
+        "chars": 353
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "max_lines": 40,
+          "path": "app/engine/planning.py",
+          "symbol": "ready_subtasks"
+        },
+        "chars": 753
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "launchable_subtasks",
+          "limit": 20
+        },
+        "chars": 265
+      }
+    ],
+    "extra_round": false
+  },
+  "errors": [
+    "证据绑定失败：子任务 1 target app/engine/planning.py:launchable_subtasks 缺少 evidence_id；子任务 1 target app/engine/planning.py:ready_subtasks 缺少 evidence_id；子任务 1 target app/write_scope.py:scopes_overlap 缺少 evidence_id；子任务 1 target app/engine/workflow.py:pick_next_node 缺少 evidence_id；子任务 2 target app/engine/planning.py:launchable_subtasks 缺少 evidence_id；子任务 3 target tests/test_parallel.py:test_launchable_respects_in_flight_and_unscoped_nodes 缺少 evidence_id；子任务 4 target tests/test_parallel.py:test_launchable_respects_in_flight_and_unscoped_nodes 缺少 evidence_id；子任务 4 target tests/test_write_scope.py:test_write_inside_scope_succeeds_outside_rejected_with_evidence 缺少 evidence_id；coverage 缺少证据文件 app/write_guard.py 的角色"
+  ],
+  "usage": {
+    "prompt_tokens": 24046,
+    "completion_tokens": 6818,
+    "total_tokens": 30864
+  },
+  "cost_usd": 0.009596
+}

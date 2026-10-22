@@ -1,0 +1,373 @@
+{
+  "goal": "在 API 中新增一个只读接口，返回当前计划的 grounding_warnings",
+  "task_type": "feature",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 grounding_warnings 的存储与读取路径",
+      "description": "只读分析：确认 check_plan_grounding（app/engine/planning.py）返回的 warnings 是否被写入 plan 字典及键名，确认 app/main.py 中既有只读计划接口的获取方式（如 _plan_or_404 若存在）与 404 语义。所有符号均需在代码中实际检索确认，未找到的标 to-verify。不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读 app/engine/planning.py:check_plan_grounding 与 app/main.py 相关只读接口片段 | 期望:明确 grounding_warnings 在 plan 字典中的键名、写入位置与现有只读接口复用点，形成实现结论 | 测试:（分析任务，无自动化测试） | 边界:plan 不存在或 plan 中无 grounding_warnings 键时的返回语义需明确"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_plan_grounding",
+          "reason": "确认 warnings 的生成与返回结构",
+          "evidence_ref": "E1 L2020-2059",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "reason": "确认只读计划接口获取 plan 的既有方式与 404 语义（若不存在则标 to-verify）",
+          "evidence_ref": "无（需检索确认）",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "reason": "参考既有只读接口的路由声明与返回结构（若不存在则标 to-verify）",
+          "evidence_ref": "无（需检索确认）",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新增只读接口返回 grounding_warnings",
+      "description": "在 app/main.py 新增只读 GET 接口，复用既有计划获取逻辑（如 _plan_or_404，若不存在则按现有模式实现），返回 {run_id, grounding_warnings: plan.get('grounding_warnings') or []}。路由路径与鉴权依赖需与相邻只读接口保持一致，具体路径在实现时确认。不修改任何写入逻辑。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:存在一个已生成计划且 plan 中含 grounding_warnings 的 run_id | 期望:GET 新接口返回 200，body 含 run_id 与 grounding_warnings 列表，内容与 plan 中一致 | 测试:pytest tests/test_api.py（文件存在性待确认） | 边界:plan 中无 grounding_warnings 键时返回空列表而非报错",
+        "前提:run_id 不存在 | 期望:返回 404，与既有计划接口行为一致 | 测试:pytest tests/test_api.py（文件存在性待确认） | 边界:非法 run_id 格式不导致 500"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/main.py"
+      ],
+      "targets": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "reason": "复用其获取当前计划与 404 处理（若不存在则标 to-verify）",
+          "evidence_ref": "无（需检索确认）",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "reason": "参照其只读接口的路由/依赖声明风格新增端点（若不存在则标 to-verify）",
+          "evidence_ref": "无（需检索确认）",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充接口测试",
+      "description": "在 tests/test_api.py（若不存在则新建，并在描述中标注新建文件）新增测试函数，构造含 grounding_warnings 的计划，断言新只读接口返回 200 且 grounding_warnings 与计划一致；再断言不存在 run_id 返回 404、无该键时返回空列表。仅新增测试，不改生产逻辑。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:测试中已创建含 grounding_warnings 的计划 | 期望:新接口返回 200 且 grounding_warnings 列表与计划一致 | 测试:pytest tests/test_api.py | 边界:无 grounding_warnings 键时返回空列表",
+        "前提:请求不存在的 run_id | 期望:返回 404 | 测试:pytest tests/test_api.py | 边界:非法 run_id 格式不导致 500"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_api.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_grounding_warnings_endpoint",
+          "reason": "新增针对 grounding_warnings 只读接口的用例（若文件不存在则新建并标注）",
+          "evidence_ref": "无（需检索确认）",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "回归验证既有计划接口与全量测试",
+      "description": "运行新增测试与既有计划相关测试，确认新增只读端点未影响既有接口，并跑 ruff 检查 app/main.py 与 tests/test_api.py。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已完成接口与测试修改 | 期望:新增用例与既有计划接口用例全部通过，ruff 无新增告警 | 测试:pytest tests/test_api.py 及既有计划相关测试 | 边界:既有只读接口返回结构保持不变"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 grounding_warnings 的存储与读取路径",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_plan_grounding",
+          "line": 2020,
+          "reason": "确认 warnings 的生成与返回结构",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "line": 348,
+          "reason": "确认只读计划接口获取 plan 的既有方式与 404 语义（若不存在则标 to-verify）",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "line": 616,
+          "reason": "参考既有只读接口的路由声明与返回结构（若不存在则标 to-verify）",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_plan_grounding",
+          "lines": "2020-2059",
+          "text": "2020| def check_plan_grounding(specs: list[dict[str, Any]],\n2021|                          workspace: str | Path | None) -> list[str]:\n2022|     \"\"\"Warn about write_scope entries / mentioned files that do not exist.\n2023| \n2024|     Never raises: these are soft warnings recorded on the plan, because a\n2025|     subtask may legitimately create new files.\n2026|     \"\"\"\n2027|     try:\n2028|         root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)\n2029|     except Exception:  # noqa: BLE001\n2030|         return []\n2031|     warnings: list[str] = []\n2032|     for spec in specs or []:"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "lines": "348-352",
+          "text": "348| def _plan_or_404(run_id: str) -> dict:\n349|     plan = storage.get_plan(run_id)\n350|     if not plan or not plan.get(\"subtasks\"):\n351|         raise HTTPException(status_code=404, detail=\"该任务还没有任务图\")\n352|     return plan"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "lines": "616-623",
+          "text": "616| def list_plan_versions(run_id: str):\n617|     \"\"\"Append-only plan history (summaries, oldest first).\"\"\"\n618|     _run_or_404(run_id)\n619|     plan = storage.get_plan(run_id) or {}\n620|     return {\"run_id\": run_id, \"current_version\": plan.get(\"version\"),\n621|             \"current_revision\": plan.get(\"revision\"),\n622|             \"goal\": plan.get(\"goal\"), \"goal_clauses\": plan.get(\"goal_clauses\") or [],\n623|             \"versions\": storage.list_plan_versions(run_id)}"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读 app/engine/planning.py:check_plan_grounding 与 app/main.py 相关只读接口片段 | 期望:明确 grounding_warnings 在 plan 字典中的键名、写入位置与现有只读接口复用点，形成实现结论 | 测试:（分析任务，无自动化测试） | 边界:plan 不存在或 plan 中无 grounding_warnings 键时的返回语义需明确"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "新增只读接口返回 grounding_warnings",
+      "kind": "modify",
+      "files": [
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "line": 348,
+          "reason": "复用其获取当前计划与 404 处理（若不存在则标 to-verify）",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "line": 616,
+          "reason": "参照其只读接口的路由/依赖声明风格新增端点（若不存在则标 to-verify）",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_or_404",
+          "lines": "348-352",
+          "text": "348| def _plan_or_404(run_id: str) -> dict:\n349|     plan = storage.get_plan(run_id)\n350|     if not plan or not plan.get(\"subtasks\"):\n351|         raise HTTPException(status_code=404, detail=\"该任务还没有任务图\")\n352|     return plan"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "list_plan_versions",
+          "lines": "616-623",
+          "text": "616| def list_plan_versions(run_id: str):\n617|     \"\"\"Append-only plan history (summaries, oldest first).\"\"\"\n618|     _run_or_404(run_id)\n619|     plan = storage.get_plan(run_id) or {}\n620|     return {\"run_id\": run_id, \"current_version\": plan.get(\"version\"),\n621|             \"current_revision\": plan.get(\"revision\"),\n622|             \"goal\": plan.get(\"goal\"), \"goal_clauses\": plan.get(\"goal_clauses\") or [],\n623|             \"versions\": storage.list_plan_versions(run_id)}"
+        }
+      ],
+      "test_command": "pytest tests/test_api.py（文件存在性待确认）",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:存在一个已生成计划且 plan 中含 grounding_warnings 的 run_id | 期望:GET 新接口返回 200，body 含 run_id 与 grounding_warnings 列表，内容与 plan 中一致 | 测试:pytest tests/test_api.py（文件存在性待确认） | 边界:plan 中无 grounding_warnings 键时返回空列表而非报错",
+        "前提:run_id 不存在 | 期望:返回 404，与既有计划接口行为一致 | 测试:pytest tests/test_api.py（文件存在性待确认） | 边界:非法 run_id 格式不导致 500"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "补充接口测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_api.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_api.py",
+          "symbol": "test_grounding_warnings_endpoint",
+          "line": null,
+          "reason": "新增针对 grounding_warnings 只读接口的用例（若文件不存在则新建并标注）",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [],
+      "test_command": "pytest tests/test_api.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:测试中已创建含 grounding_warnings 的计划 | 期望:新接口返回 200 且 grounding_warnings 列表与计划一致 | 测试:pytest tests/test_api.py | 边界:无 grounding_warnings 键时返回空列表",
+        "前提:请求不存在的 run_id | 期望:返回 404 | 测试:pytest tests/test_api.py | 边界:非法 run_id 格式不导致 500"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "回归验证既有计划接口与全量测试",
+      "kind": "verify",
+      "files": [],
+      "symbols": [],
+      "snippets": [],
+      "test_command": "pytest tests/test_api.py 及既有计划相关测试",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:已完成接口与测试修改 | 期望:新增用例与既有计划接口用例全部通过，ruff 无新增告警 | 测试:pytest tests/test_api.py 及既有计划相关测试 | 边界:既有只读接口返回结构保持不变"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "证据引用越界：E7/E17/E13/E14 未出现在给定的探索证据摘要（仅 E1-E5）中，属于编造证据；targets 中 status=confirmed 的符号（_attach_grounding_warnings、_plan_or_404、list_plan_versions）均无证据支撑，应改为 to-verify 或删除。",
+      "子任务 3 的 target symbol 写成 'test_api'（模块名而非真实测试函数），且 status=to-verify 却用于 modify 目标，语义不清；应改为在描述中标注新建测试函数名，targets 指向已存在文件路径并说明新增符号。",
+      "子任务 3 的验收标准未结构化拆分：只有一条含 precondition/expected_behavior/test_target/edge_case，缺少对 404 与空列表的独立结构化条目。",
+      "子任务 2 的验收标准 test_target 写 'pytest tests/test_api.py' 但未确认该文件存在（E14 为编造证据），需标 to-verify 或改为具体测试文件路径确认。",
+      "子任务 4 为 verify 但未在 acceptance_criteria 中给出结构化 precondition/expected_behavior/test_target/edge_case 字段，仅用竖线拼接字符串，不符合结构化要求。",
+      "缺少对 grounding_warnings 来源的分析证据：候选计划声称 workflow.py 写入 plan['grounding_warnings']，但探索证据仅有 check_plan_grounding（E1）返回 list[str]，未证明持久化键名，分析结论存在未验证假设。",
+      "步骤数 4 在 feature 上限 6 内，但子任务 1 为 analyze 却包含 targets 指向 modify 类符号，虽未写代码但应明确 analysis 目标禁止 modify 的边界；当前 targets 仅用于阅读，可接受但需在描述中强调只读。",
+      "子任务 2 描述中路由 '/runs/{run_id}/plan/grounding-warnings' 为编造，未在证据中出现，应改为 to-verify 或标注待确认。",
+      "子任务 3 与 4 的 depends_on 正确，但子任务 4 未 depends_on 子任务 1 的分析结论，若分析结论影响接口设计应补充依赖或说明。",
+      "write_scope 中 'app/main.py' 与 'tests/test_api.py' 为精确文件路径，符合规则，但需确认文件存在；当前无证据，应标 to-verify 并在描述中说明。"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/storage.py",
+      "frontend/src/api.ts",
+      "tests/test_planner_grounding.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:PlanError",
+      "app/engine/planning.py:build_grounding",
+      "app/engine/planning.py:check_plan_grounding",
+      "app/engine/workflow.py:MemoryPlanStore",
+      "app/engine/workflow.py:_attach_grounding_warnings",
+      "app/engine/workflow.py:_route",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/storage.py:append_plan_version",
+      "app/storage.py:get_plan",
+      "app/storage.py:save_plan",
+      "frontend/src/api.ts:apiFetch",
+      "frontend/src/api.ts:formatApiError",
+      "tests/test_planner_grounding.py:test_check_plan_grounding",
+      "tests/test_planner_grounding.py:test_planner_messages_include_grounding"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 36
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "grounding_warnings",
+          "limit": 20
+        },
+        "chars": 168
+      },
+      {
+        "tool": "search_path",
+        "args": {
+          "query": "app/api",
+          "limit": 20
+        },
+        "chars": 13
+      },
+      {
+        "tool": "search_path",
+        "args": {
+          "query": "api",
+          "limit": 20
+        },
+        "chars": 37
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "@app.get",
+          "limit": 20
+        },
+        "chars": 35
+      }
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 12730,
+    "completion_tokens": 3316,
+    "total_tokens": 16046
+  },
+  "cost_usd": 0.004957
+}

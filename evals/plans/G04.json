@@ -1,0 +1,107 @@
+{
+  "goal": "分析计划被用户拒绝后重新拆解的完整流程，说明 MAX_PLAN_REJECTIONS 在哪里生效",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 定义与全部引用点",
+      "description": "在 app/ 与 tests/ 中检索 MAX_PLAN_REJECTIONS（含 config.py、engine/planning.py、engine/workflow.py、main.py、schemas.py），列出定义处（默认值、可配置来源）与每一处读取/比较的代码位置、所在函数与行号，形成引用清单。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "输出 MAX_PLAN_REJECTIONS 的定义位置（文件:行号）与默认值",
+        "列出所有引用点（文件:行号 + 所在函数名），无遗漏（与 grep 结果一致）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "梳理计划审批与拒绝的 API 入口",
+      "description": "分析 app/main.py 中 approve_run / 计划审批相关端点（PlanApprovalRequest 处理路径）与 app/schemas.py:PlanApprovalRequest，说明用户拒绝计划时请求如何进入工作流、写入哪些状态字段（如 plan_approved / rejection 计数 / feedback），以及拒绝后 run 状态如何变化。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "给出拒绝计划的 API 端点、请求体字段与处理函数（文件:行号）",
+        "说明拒绝时写入 plan 的字段名与 run 状态迁移"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "梳理拒绝后重新拆解的控制流",
+      "description": "分析 app/engine/workflow.py 中计划审批节点与 _generate_specs / 重规划路径（含 _record_version、reason 字段、feedback 传递），说明拒绝后如何带着用户反馈重新调用规划、生成新版本计划、以及重新进入审批的完整节点顺序。",
+      "depends_on": [
+        "1",
+        "2"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "按顺序列出拒绝→重新拆解→再次审批经过的节点/函数（文件:行号）",
+        "说明 feedback 与 plan 版本（version/revision/parent）在重拆解时如何更新"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "确认 MAX_PLAN_REJECTIONS 的生效点与超限行为",
+      "description": "结合任务 1-3 的结论，精确定位 MAX_PLAN_REJECTIONS 在哪个节点/函数被比较（拒绝次数累加位置、比较运算符、边界是 >= 还是 >），说明达到上限后工作流的行为（run 失败/终止状态、错误信息、是否还能再次审批），并核对 tests/ 中覆盖该行为的测试用例。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "给出比较 MAX_PLAN_REJECTIONS 的确切代码位置与边界语义（第 N 次拒绝是否触发）",
+        "说明超限后的 run 终态与用户可见错误信息",
+        "列出覆盖该行为的现有测试（文件:行号），若无则明确标注缺失"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "输出完整流程说明文档",
+      "description": "将任务 1-4 的结论整合为一份说明：拒绝后重新拆解的端到端流程（含时序/节点图）、MAX_PLAN_REJECTIONS 的生效位置与边界语义、相关配置项与测试覆盖情况。仅输出分析结论，不修改代码。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "文档覆盖 C1 全部要素：完整流程 + MAX_PLAN_REJECTIONS 生效点",
+        "所有结论均带文件:行号引用，可被独立复核"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [
+    "子任务 1: 描述中提到的文件 engine/planning.py 不存在",
+    "子任务 1: 描述中提到的文件 engine/workflow.py 不存在"
+  ]
+}

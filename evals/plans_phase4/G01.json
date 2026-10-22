@@ -1,0 +1,1317 @@
+{
+  "goal": "规划器拆解任务时 write_scope 重叠检测对 glob 判断不准，修复 check_write_scopes 并补充测试",
+  "task_type": "bugfix",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 check_write_scopes 的 glob 重叠判定缺陷",
+      "description": "阅读 app/engine/planning.py 中 check_write_scopes（L325-349）与 validate_subtasks（L242-302）的调用关系，确认当前重叠检测如何比较 write_scope 条目（是否仅字符串相等、是否忽略 ** 与目录前缀、是否未展开 glob）。对照 app/write_scope.py 的 normalize_pattern（L41-56）与 dir_in_scope（L111-126）理解项目内既有 glob 语义，判断 check_write_scopes 是否应复用同一套展开/匹配逻辑。产出缺陷复现最小输入（如 ['app/engine/*.py'] 与 ['app/engine/planning.py'] 应判重叠但当前未判）与拟采用匹配策略。只读分析，不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定两条 write_scope：['app/engine/*.py'] 与 ['app/engine/planning.py']，且两子任务间无依赖路径 | 期望:分析结论明确指出当前 check_write_scopes 未判定为重叠（缺陷成立），并给出应判重叠的匹配策略 | 测试:pytest tests/test_plan_traceability.py::test_scope_overlap_retries_planner_then_succeeds | 边界:确认 ** 通配、目录前缀（app/engine/ 与 app/engine/x.py）、完全相同字符串三种情形下的期望语义"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "reason": "待修复的重叠检测函数本体，需先确认其当前比较逻辑",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "check_write_scopes 的唯一调用方，确认传入 specs 形态与异常传播方式",
+          "evidence_ref": "EV45",
+          "evidence_id": "EV45",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "normalize_pattern",
+          "reason": "项目内既有 glob 归一化实现，判断是否可复用为重叠判定基础",
+          "evidence_ref": "EV50",
+          "evidence_id": "EV50",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "dir_in_scope",
+          "reason": "既有目录级 glob 包含判定，参考其 ** 处理方式",
+          "evidence_ref": "EV6",
+          "evidence_id": "EV6",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 check_write_scopes 的 glob 重叠判定",
+      "description": "在 app/engine/planning.py 的 check_write_scopes（L325-349）中修正 write_scope 重叠检测：将每条 scope 模式按 app/write_scope.py 的 normalize_pattern 语义归一化后做双向 glob 匹配（模式 A 是否覆盖模式 B 的任一可能路径，反之亦然），覆盖 ** 递归、目录前缀与精确文件三类情形；仅在两子任务之间不存在依赖路径（沿用 _ancestors 的图判定）时抛出 PlanError。保持函数签名与既有 PlanError 文案风格不变，避免影响 validate_subtasks 的调用契约。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:两条无依赖关系的 modify 子任务，write_scope 分别为 ['app/engine/*.py'] 与 ['app/engine/planning.py'] | 期望:check_write_scopes 抛出 PlanError，提示写入范围重叠 | 测试:pytest tests/test_plan_traceability.py::test_scope_overlap_retries_planner_then_succeeds | 边界:['app/engine/**'] 与 ['app/engine/deep/x.py'] 同样判重叠；而 ['app/engine/a.py'] 与 ['app/tools/b.py'] 不得误判",
+        "前提:两条 modify 子任务 write_scope 重叠但存在依赖路径（后者依赖前者） | 期望:check_write_scopes 不抛错，允许串行执行 | 测试:pytest tests/test_plan_traceability.py::test_scope_errors_twice_fall_back_to_single_subtask | 边界:依赖路径为间接（A→B→C）时仍视为有路径，不误报"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "reason": "重叠检测逻辑本体，需改为基于 glob 归一化的双向匹配",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "调用方，需确认修复后异常仍按原路径抛出且不破坏既有校验顺序",
+          "evidence_ref": "EV45",
+          "evidence_id": "EV45",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充 glob 重叠检测的单元测试",
+      "description": "在 tests/test_plan_traceability.py 中新增针对 check_write_scopes 的 glob 重叠用例（新建测试函数，文件已存在）：覆盖 * 通配命中精确文件、** 递归命中深层文件、目录前缀命中、无重叠不误报、有依赖路径时不报错五类场景。测试直接调用 app.engine.planning.check_write_scopes 并断言 PlanError 的抛出/不抛出，不依赖 LLM。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:新增测试用例覆盖 ['app/engine/*.py'] 与 ['app/engine/planning.py'] 无依赖场景 | 期望:测试断言 check_write_scopes 抛出 PlanError | 测试:pytest tests/test_plan_traceability.py | 边界:同时覆盖 ['app/engine/**'] 与 ['app/engine/deep/x.py'] 判重叠、['app/engine/a.py'] 与 ['app/tools/b.py'] 不误判"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_plan_traceability.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_scope_overlap_retries_planner_then_succeeds",
+          "reason": "既有重叠检测测试，新增 glob 用例需与其风格一致并避免重复",
+          "evidence_ref": "EV25",
+          "evidence_id": "EV25",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_scope_errors_twice_fall_back_to_single_subtask",
+          "reason": "既有重叠错误回退测试，新增用例需保持其断言风格",
+          "evidence_ref": "EV26",
+          "evidence_id": "EV26",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "回归验证既有 write_scope 与计划校验测试",
+      "description": "运行与 write_scope 契约、计划校验相关的既有测试，确认 check_write_scopes 修复未破坏工具层写入范围强制、modify 空 scope 拒绝、以及重叠重试/回退流程。只读验证，不改代码。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已应用 check_write_scopes 修复并新增 glob 测试 | 期望:相关测试全部通过，无回归 | 测试:pytest tests/test_write_scope.py tests/test_plan_traceability.py | 边界:确认 test_scope_overlap_retries_planner_then_succeeds 与 test_scope_errors_twice_fall_back_to_single_subtask 仍通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+          "reason": "验证工具层写入范围强制未受规划器改动影响",
+          "evidence_ref": "EV22",
+          "evidence_id": "EV22",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_modify_with_empty_write_scope_rejected",
+          "reason": "验证 modify 空 scope 拒绝逻辑仍生效",
+          "evidence_ref": "EV24",
+          "evidence_id": "EV24",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/engine/planning.py",
+      "role": "modify",
+      "reason": "check_write_scopes 与 validate_subtasks 所在文件，重叠检测修复主体",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "app/write_scope.py",
+      "role": "read",
+      "reason": "复用 normalize_pattern 与 dir_in_scope 的 glob 语义作为重叠判定基础",
+      "evidence_id": "EV50"
+    },
+    {
+      "path": "tests/test_plan_traceability.py",
+      "role": "modify",
+      "reason": "新增 glob 重叠单元测试并回归既有重叠/回退用例",
+      "evidence_id": "EV25"
+    },
+    {
+      "path": "tests/test_write_scope.py",
+      "role": "verify",
+      "reason": "回归工具层写入范围强制未受规划器改动影响",
+      "evidence_id": "EV22"
+    },
+    {
+      "path": "app/write_guard.py",
+      "role": "not-needed",
+      "reason": "写入守卫负责提交/回滚与版本冲突，与规划器静态 write_scope 重叠检测无调用关系，本次不涉及",
+      "evidence_id": "EV7"
+    },
+    {
+      "path": "app/main.py",
+      "role": "not-needed",
+      "reason": "API 层仅暴露计划视图与版本列表，不参与 check_write_scopes 的重叠判定逻辑",
+      "evidence_id": "EV10"
+    },
+    {
+      "path": "app/engine/workflow.py",
+      "role": "not-needed",
+      "reason": "工作流在运行时消费已校验的计划，重叠检测在规划阶段完成，本次修复不改其调度逻辑",
+      "evidence_id": "EV46"
+    },
+    {
+      "path": "app/planner/context.py",
+      "role": "not-needed",
+      "reason": "负责构建 grounding 上下文，与 write_scope 重叠判定无关",
+      "evidence_id": "EV17"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/planning.py",
+      "symbol": "check_write_scopes",
+      "kind": "definition",
+      "line_start": 325,
+      "line_end": 349,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/planning.py",
+      "symbol": "migrate_legacy_write_scopes",
+      "kind": "definition",
+      "line_start": 687,
+      "line_end": 749,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/engine/planning.py",
+      "symbol": "check_plan_grounding",
+      "kind": "definition",
+      "line_start": 2041,
+      "line_end": 2080,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/write_scope.py",
+      "symbol": "WriteScope",
+      "kind": "definition",
+      "line_start": 176,
+      "line_end": 234,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/write_scope.py",
+      "symbol": "ScopeError",
+      "kind": "definition",
+      "line_start": 37,
+      "line_end": 38,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/write_scope.py",
+      "symbol": "dir_in_scope",
+      "kind": "definition",
+      "line_start": 111,
+      "line_end": 126,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/write_guard.py",
+      "symbol": "WriteGuardError",
+      "kind": "definition",
+      "line_start": 59,
+      "line_end": 60,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/write_guard.py",
+      "symbol": "WriteConflict",
+      "kind": "definition",
+      "line_start": 63,
+      "line_end": 64,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/write_guard.py",
+      "symbol": "check_expected_version",
+      "kind": "definition",
+      "line_start": 156,
+      "line_end": 174,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/main.py",
+      "symbol": "get_run_plan",
+      "kind": "definition",
+      "line_start": 466,
+      "line_end": 468,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "app/main.py",
+      "symbol": "run_events",
+      "kind": "definition",
+      "line_start": 100,
+      "line_end": 157,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "app/main.py",
+      "symbol": "list_plan_versions",
+      "kind": "definition",
+      "line_start": 616,
+      "line_end": 623,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "app/engine/planning.py",
+      "symbol": "build_project_overview",
+      "kind": "definition",
+      "line_start": 1573,
+      "line_end": 1616,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounding",
+      "kind": "definition",
+      "line_start": 1992,
+      "line_end": 2003,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "app/engine/workflow.py",
+      "symbol": "_generate_specs",
+      "kind": "definition",
+      "line_start": 575,
+      "line_end": 621,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounded_planner_messages",
+      "kind": "definition",
+      "line_start": 2006,
+      "line_end": 2034,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "app/planner/context.py",
+      "symbol": "build_grounding_pack",
+      "kind": "definition",
+      "line_start": 137,
+      "line_end": 193,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "app/engine/workflow.py",
+      "symbol": "WorkflowState",
+      "kind": "definition",
+      "line_start": 474,
+      "line_end": 501,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "app/engine/workflow.py",
+      "symbol": "build_workflow",
+      "kind": "definition",
+      "line_start": 1531,
+      "line_end": 1572,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "app/engine/workflow.py",
+      "symbol": "run_workflow",
+      "kind": "definition",
+      "line_start": 1609,
+      "line_end": 1661,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_ruff_fix_inside_scope_passes_scope_check",
+      "kind": "test",
+      "line_start": 132,
+      "line_end": 137,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 80,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_executor_rejects_out_of_scope_write_without_asking",
+      "kind": "test",
+      "line_start": 163,
+      "line_end": 177,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_modify_with_empty_write_scope_rejected",
+      "kind": "test",
+      "line_start": 53,
+      "line_end": 55,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_scope_overlap_retries_planner_then_succeeds",
+      "kind": "test",
+      "line_start": 91,
+      "line_end": 104,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_scope_errors_twice_fall_back_to_single_subtask",
+      "kind": "test",
+      "line_start": 107,
+      "line_end": 115,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_planner_explore.py",
+      "symbol": "test_verify_cannot_have_write_scope",
+      "kind": "test",
+      "line_start": 109,
+      "line_end": 116,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/conftest.py",
+      "symbol": "_legacy_workflow_defaults",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 74,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_workflow.py",
+      "symbol": "test_workflow_fails_when_no_tool_executed",
+      "kind": "test",
+      "line_start": 47,
+      "line_end": 54,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_workflow.py",
+      "symbol": "test_workflow_fails_without_api_key",
+      "kind": "test",
+      "line_start": 57,
+      "line_end": 63,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_edge_034.py",
+      "symbol": "test_legacy_analyze_becomes_readonly",
+      "kind": "test",
+      "line_start": 187,
+      "line_end": 193,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_edge_034.py",
+      "symbol": "test_legacy_modify_migrates_when_strict_false",
+      "kind": "test",
+      "line_start": 230,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "test_check_plan_grounding",
+      "kind": "test",
+      "line_start": 91,
+      "line_end": 105,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "tests/test_edge_034.py",
+      "symbol": "test_run_command_always_scratch_when_scoped",
+      "kind": "test",
+      "line_start": 162,
+      "line_end": 179,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_readonly_subtask_refuses_write_command_before_start",
+      "kind": "test",
+      "line_start": 159,
+      "line_end": 174,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_cancel_kills_running_command",
+      "kind": "test",
+      "line_start": 187,
+      "line_end": 215,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "tests/test_edge_036.py",
+      "symbol": "test_readonly_refuses_networky_without_approval",
+      "kind": "test",
+      "line_start": 64,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "tests/test_limits_opt.py",
+      "symbol": "test_run_project_command_pytest_uses_scratch",
+      "kind": "test",
+      "line_start": 83,
+      "line_end": 102,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "tests/test_write_scope.py",
+      "symbol": "_ctx",
+      "kind": "test",
+      "line_start": 61,
+      "line_end": 64,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+      "kind": "test",
+      "line_start": 195,
+      "line_end": 220,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_structural_replan_creates_new_version_with_parent",
+      "kind": "test",
+      "line_start": 223,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_rejection_records_new_version_keeping_clauses",
+      "kind": "test",
+      "line_start": 242,
+      "line_end": 258,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "tests/test_planner_grounding.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 122,
+      "line_end": 122,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 28,
+      "line_end": 28,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "app/engine/planning.py",
+      "symbol": "validate_subtasks",
+      "kind": "caller",
+      "line_start": 242,
+      "line_end": 302,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "app/engine/workflow.py",
+      "symbol": "pick_next_node",
+      "kind": "caller",
+      "line_start": 736,
+      "line_end": 812,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "app/engine/workflow.py",
+      "symbol": "_start_subtask",
+      "kind": "caller",
+      "line_start": 835,
+      "line_end": 975,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "app/engine/workflow.py",
+      "symbol": "_generate_specs",
+      "kind": "caller",
+      "line_start": 575,
+      "line_end": 621,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "scripts/try_plan.py",
+      "symbol": "main",
+      "kind": "caller",
+      "line_start": 46,
+      "line_end": 177,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "app/write_scope.py",
+      "symbol": "normalize_pattern",
+      "kind": "caller",
+      "line_start": 41,
+      "line_end": 56,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "app/write_scope.py",
+      "symbol": "WriteScope.check_command_writes",
+      "kind": "caller",
+      "line_start": 219,
+      "line_end": 230,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "app/write_guard.py",
+      "symbol": "inspect",
+      "kind": "caller",
+      "line_start": 130,
+      "line_end": 153,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV53",
+      "path": "app/write_guard.py",
+      "symbol": "check_shrink_guard",
+      "kind": "caller",
+      "line_start": 177,
+      "line_end": 192,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV54",
+      "path": "app/write_guard.py",
+      "symbol": "_read_manifest",
+      "kind": "caller",
+      "line_start": 239,
+      "line_end": 243,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV55",
+      "path": "app/write_guard.py",
+      "symbol": "_find_tx",
+      "kind": "caller",
+      "line_start": 410,
+      "line_end": 419,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV56",
+      "path": "app/write_guard.py",
+      "symbol": "rollback",
+      "kind": "caller",
+      "line_start": 432,
+      "line_end": 518,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV57",
+      "path": "app/write_guard.py",
+      "symbol": "check_expected_version",
+      "kind": "caller",
+      "line_start": 156,
+      "line_end": 174,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV58",
+      "path": "app/write_guard.py",
+      "symbol": "commit",
+      "kind": "caller",
+      "line_start": 329,
+      "line_end": 387,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV59",
+      "path": "app/tools/registry.py",
+      "symbol": "_write_file",
+      "kind": "caller",
+      "line_start": 416,
+      "line_end": 479,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV60",
+      "path": "app/tools/registry.py",
+      "symbol": "_edit_file",
+      "kind": "caller",
+      "line_start": 482,
+      "line_end": 576,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 check_write_scopes 的 glob 重叠判定缺陷",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/write_scope.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "line": 325,
+          "reason": "待修复的重叠检测函数本体，需先确认其当前比较逻辑",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 242,
+          "reason": "check_write_scopes 的唯一调用方，确认传入 specs 形态与异常传播方式",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "normalize_pattern",
+          "line": 41,
+          "reason": "项目内既有 glob 归一化实现，判断是否可复用为重叠判定基础",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "dir_in_scope",
+          "line": 111,
+          "reason": "既有目录级 glob 包含判定，参考其 ** 处理方式",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "lines": "325-349",
+          "text": "325| def check_write_scopes(\n326|     specs: list[dict[str, Any]], known_nodes: list[dict[str, Any]] | None = None,\n327| ) -> None:\n328|     \"\"\"Static write-scope checks (see :func:`validate_subtasks`).\"\"\"\n329|     for s in specs:\n330|         if s.get(\"kind\") == \"modify\" and not s.get(\"write_scope\"):\n331|             raise PlanError(\n332|                 f\"子任务 {s['id']} 是修改类（modify），但 write_scope 为空；\"\n333|                 \"请列出它允许修改的文件/目录（相对工作区的路径或 glob）。\"\n334|             )\n335|     graph = {n[\"id\"]: list(n.get(\"depends_on\") or []) for n in (known_nodes or [])}\n336|     graph.update({s[\"id\"]: list(s.get(\"depends_on\") or []) for s in specs})\n337|     anc = _ancestors(graph)"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "242-302",
+          "text": "242| def validate_subtasks(\n243|     raw: Any,\n244|     max_subtasks: int | None = None,\n245|     *,\n246|     known_ids: set[str] | None = None,\n247|     known_nodes: list[dict[str, Any]] | None = None,\n248|     clause_ids: list[str] | None = None,\n249| ) -> list[dict[str, Any]]:\n250|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n251| \n252|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n253|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n254|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "normalize_pattern",
+          "lines": "41-56",
+          "text": "41| def normalize_pattern(pattern: str) -> str:\n42|     \"\"\"Normalize one pattern to a workspace-relative POSIX form.\n43| \n44|     Rejects absolute paths, drive letters and ``..`` segments.\n45|     \"\"\"\n46|     raw = str(pattern or \"\").strip().replace(\"\\\\\", \"/\")\n47|     if not raw:\n48|         raise ScopeError(\"write_scope 不能包含空路径。\")\n49|     if raw.startswith(\"/\") or re.match(r\"^[A-Za-z]:\", raw):\n50|         raise ScopeError(f\"write_scope 必须是相对工作区的路径：{pattern}\")\n51|     segs = [s for s in raw.split(\"/\") if s not in (\"\", \".\")]\n52|     if any(s == \"..\" for s in segs):\n53|         raise ScopeError(f\"write_scope 不能包含 ..：{pattern}\")"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py::test_scope_overlap_retries_planner_then_succeeds",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:给定两条 write_scope：['app/engine/*.py'] 与 ['app/engine/planning.py']，且两子任务间无依赖路径 | 期望:分析结论明确指出当前 check_write_scopes 未判定为重叠（缺陷成立），并给出应判重叠的匹配策略 | 测试:pytest tests/test_plan_traceability.py::test_scope_overlap_retries_planner_then_succeeds | 边界:确认 ** 通配、目录前缀（app/engine/ 与 app/engine/x.py）、完全相同字符串三种情形下的期望语义"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "修复 check_write_scopes 的 glob 重叠判定",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "line": 325,
+          "reason": "重叠检测逻辑本体，需改为基于 glob 归一化的双向匹配",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 242,
+          "reason": "调用方，需确认修复后异常仍按原路径抛出且不破坏既有校验顺序",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "lines": "325-349",
+          "text": "325| def check_write_scopes(\n326|     specs: list[dict[str, Any]], known_nodes: list[dict[str, Any]] | None = None,\n327| ) -> None:\n328|     \"\"\"Static write-scope checks (see :func:`validate_subtasks`).\"\"\"\n329|     for s in specs:\n330|         if s.get(\"kind\") == \"modify\" and not s.get(\"write_scope\"):\n331|             raise PlanError(\n332|                 f\"子任务 {s['id']} 是修改类（modify），但 write_scope 为空；\"\n333|                 \"请列出它允许修改的文件/目录（相对工作区的路径或 glob）。\"\n334|             )\n335|     graph = {n[\"id\"]: list(n.get(\"depends_on\") or []) for n in (known_nodes or [])}\n336|     graph.update({s[\"id\"]: list(s.get(\"depends_on\") or []) for s in specs})\n337|     anc = _ancestors(graph)"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "242-302",
+          "text": "242| def validate_subtasks(\n243|     raw: Any,\n244|     max_subtasks: int | None = None,\n245|     *,\n246|     known_ids: set[str] | None = None,\n247|     known_nodes: list[dict[str, Any]] | None = None,\n248|     clause_ids: list[str] | None = None,\n249| ) -> list[dict[str, Any]]:\n250|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n251| \n252|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n253|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n254|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py::test_scope_overlap_retries_planner_then_succeeds",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:两条无依赖关系的 modify 子任务，write_scope 分别为 ['app/engine/*.py'] 与 ['app/engine/planning.py'] | 期望:check_write_scopes 抛出 PlanError，提示写入范围重叠 | 测试:pytest tests/test_plan_traceability.py::test_scope_overlap_retries_planner_then_succeeds | 边界:['app/engine/**'] 与 ['app/engine/deep/x.py'] 同样判重叠；而 ['app/engine/a.py'] 与 ['app/tools/b.py'] 不得误判",
+        "前提:两条 modify 子任务 write_scope 重叠但存在依赖路径（后者依赖前者） | 期望:check_write_scopes 不抛错，允许串行执行 | 测试:pytest tests/test_plan_traceability.py::test_scope_errors_twice_fall_back_to_single_subtask | 边界:依赖路径为间接（A→B→C）时仍视为有路径，不误报"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "补充 glob 重叠检测的单元测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_plan_traceability.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_scope_overlap_retries_planner_then_succeeds",
+          "line": 91,
+          "reason": "既有重叠检测测试，新增 glob 用例需与其风格一致并避免重复",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_scope_errors_twice_fall_back_to_single_subtask",
+          "line": 107,
+          "reason": "既有重叠错误回退测试，新增用例需保持其断言风格",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_scope_overlap_retries_planner_then_succeeds",
+          "lines": "91-104",
+          "text": "91| def test_scope_overlap_retries_planner_then_succeeds(planner_on, monkeypatch):\n92|     bad = plan_json(sub(\"1\", kind=\"modify\", write_scope=[\"app\"]),\n93|                     sub(\"2\", kind=\"modify\", write_scope=[\"app/x.py\"]))\n94|     good = plan_json(sub(\"1\", kind=\"modify\", write_scope=[\"app\"]),\n95|                      sub(\"2\", kind=\"modify\", write_scope=[\"app/x.py\"], deps=[\"1\"]))\n96|     llm = PlannerLLM([bad, good])\n97|     rec = Recorder()\n98|     ex = FakeExecutor({\"1\": [ok(files=[\"app/a.py\"], tests_ok=True)],\n99|                        \"2\": [ok(files=[\"app/x.py\"], tests_ok=True)]})\n100|     res = run(\"分析项目结构\", llm, rec, ex, monkeypatch, planner_on)\n101|     assert len(llm.calls) == 2\n102|     assert \"重叠\" in llm.calls[1][-1][\"content\"]  # the error is fed back\n103|     assert rec.plan_store.load()[\"source\"] == \"llm\""
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_scope_errors_twice_fall_back_to_single_subtask",
+          "lines": "107-115",
+          "text": "107| def test_scope_errors_twice_fall_back_to_single_subtask(planner_on, monkeypatch):\n108|     bad = plan_json(sub(\"1\", kind=\"modify\", write_scope=[]))\n109|     llm = PlannerLLM([bad, bad])\n110|     rec = Recorder()\n111|     run(\"分析项目结构\", llm, rec, FakeExecutor({}), monkeypatch, planner_on)\n112|     plan = rec.plan_store.load()\n113|     assert plan[\"source\"] == \"fallback\" and len(plan[\"subtasks\"]) == 1\n114|     assert plan[\"subtasks\"][0][\"write_scope\"] == [\"**\"]\n115|     assert \"write_scope\" in \" \".join(plan.get(\"notes\") or [])"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:新增测试用例覆盖 ['app/engine/*.py'] 与 ['app/engine/planning.py'] 无依赖场景 | 期望:测试断言 check_write_scopes 抛出 PlanError | 测试:pytest tests/test_plan_traceability.py | 边界:同时覆盖 ['app/engine/**'] 与 ['app/engine/deep/x.py'] 判重叠、['app/engine/a.py'] 与 ['app/tools/b.py'] 不误判"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "回归验证既有 write_scope 与计划校验测试",
+      "kind": "verify",
+      "files": [
+        "tests/test_write_scope.py",
+        "tests/test_plan_traceability.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+          "line": 67,
+          "reason": "验证工具层写入范围强制未受规划器改动影响",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_modify_with_empty_write_scope_rejected",
+          "line": 53,
+          "reason": "验证 modify 空 scope 拒绝逻辑仍生效",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_write_inside_scope_succeeds_outside_rejected_with_evidence",
+          "lines": "67-80",
+          "text": "67| def test_write_inside_scope_succeeds_outside_rejected_with_evidence(tmp_path):\n68|     ctx = _ctx(tmp_path, [\"src/**\"])\n69|     write = get_tool(\"write_file\").handler\n70|     ok = write({\"path\": \"src/a.py\", \"content\": \"x = 1\\n\"}, ctx)\n71|     assert ok.get(\"ok\", True) and not ok.get(\"error\"), ok\n72|     assert (tmp_path / \"src/a.py\").read_text(encoding=\"utf-8\") == \"x = 1\\n\"\n73|     bad = write({\"path\": \"other.py\", \"content\": \"y = 2\\n\"}, ctx)\n74|     assert \"write_scope\" in str(bad) or \"写入范围\" in str(bad)\n75|     assert not (tmp_path / \"other.py\").exists()\n76|     violations = ctx.write_scope.snapshot_violations()\n77|     assert len(violations) == 1\n78|     v = violations[0]\n79|     assert v[\"type\"] == \"scope_violation\" and v[\"path\"] == \"other.py\""
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_modify_with_empty_write_scope_rejected",
+          "lines": "53-55",
+          "text": "53| def test_modify_with_empty_write_scope_rejected():\n54|     with pytest.raises(P.PlanError, match=\"write_scope 为空\"):\n55|         P.validate_subtasks([sub(\"1\", kind=\"modify\", write_scope=[])], 8)"
+        }
+      ],
+      "test_command": "pytest tests/test_write_scope.py tests/test_plan_traceability.py",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:已应用 check_write_scopes 修复并新增 glob 测试 | 期望:相关测试全部通过，无回归 | 测试:pytest tests/test_write_scope.py tests/test_plan_traceability.py | 边界:确认 test_scope_overlap_retries_planner_then_succeeds 与 test_scope_errors_twice_fall_back_to_single_subtask 仍通过"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务3为modify但write_scope指向tests/test_plan_traceability.py，targets却只列既有测试函数，未标明新增测试函数名；新建测试函数须在描述中明确（描述已提“新建测试函数”，但targets缺少新增符号的说明，且modify的targets应聚焦被修改对象，此处可接受但需在描述中明确新建函数名）",
+      "子任务1为analyze却包含targets且status=confirmed，规则要求analysis目标禁止modify——此处kind=analyze但targets存在，需确认analysis是否允许targets；规则仅禁止analysis的modify，targets本身未禁止，但子任务1的write_scope为空且kind=analyze，targets用于定位可接受",
+      "子任务2的验收标准引用test_scope_errors_twice_fall_back_to_single_subtask作为“有依赖路径不报错”的测试，但该测试实际是重叠错误两次后回退单子任务，语义不匹配，应改用更贴切的测试或说明",
+      "子任务3的验收标准test_target为pytest tests/test_plan_traceability.py，但未指定新增测试函数名，结构化不足",
+      "缺少顶层coverage字段，必须为每个证据文件指定角色（app/engine/planning.py、app/write_scope.py、app/write_guard.py、app/main.py、app/engine/workflow.py、app/planner/context.py）",
+      "子任务4为verify，depends_on包含2和3，符合要求；但targets中test_write_inside_scope_succeeds_outside_rejected_with_evidence属于工具层，与规划器改动关联弱，可保留但需说明",
+      "子任务2描述提到“沿用_ancestors的图判定”，但证据登记表中无_ancestors符号证据，存在未登记符号引用风险",
+      "子任务3的targets引用EV25/EV26为既有测试，但新增测试函数无evidence_id，新建符号无需evidence但需在描述中明确函数名"
+    ],
+    "revised_coverage": [
+      {
+        "path": "app/engine/planning.py",
+        "role": "primary_fix",
+        "evidence_ids": [
+          "EV1",
+          "EV2",
+          "EV3",
+          "EV13",
+          "EV14",
+          "EV16",
+          "EV45"
+        ]
+      },
+      {
+        "path": "app/write_scope.py",
+        "role": "reference_semantics",
+        "evidence_ids": [
+          "EV4",
+          "EV5",
+          "EV6",
+          "EV50",
+          "EV51"
+        ]
+      },
+      {
+        "path": "app/write_guard.py",
+        "role": "regression_context",
+        "evidence_ids": [
+          "EV7",
+          "EV8",
+          "EV9",
+          "EV52",
+          "EV53",
+          "EV57",
+          "EV58"
+        ]
+      },
+      {
+        "path": "app/main.py",
+        "role": "regression_context",
+        "evidence_ids": [
+          "EV10",
+          "EV11",
+          "EV12"
+        ]
+      },
+      {
+        "path": "app/engine/workflow.py",
+        "role": "regression_context",
+        "evidence_ids": [
+          "EV15",
+          "EV18",
+          "EV19",
+          "EV20",
+          "EV46",
+          "EV47"
+        ]
+      },
+      {
+        "path": "app/planner/context.py",
+        "role": "reference_context",
+        "evidence_ids": [
+          "EV17"
+        ]
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "证据绑定失败：coverage app/engine/planning.py 角色「primary_fix」无效；coverage app/write_scope.py 角色「reference_semantics」无效；coverage app/write_guard.py 角色「regression_context」无效；coverage app/main.py 角色「regression_context」无效；coverage app/engine/workflow.py 角色「regression_context」无效；coverage app/planner/context.py 角色「reference_context」无效；coverage app/engine/planning.py 角色与 write_scope 不一致（应为 modify）"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/write_guard.py",
+      "app/write_scope.py",
+      "tests/test_plan_traceability.py",
+      "tests/test_write_scope.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:build_grounded_planner_messages",
+      "app/engine/planning.py:build_grounding",
+      "app/engine/planning.py:build_project_overview",
+      "app/engine/planning.py:check_plan_grounding",
+      "app/engine/planning.py:check_write_scopes",
+      "app/engine/planning.py:migrate_legacy_write_scopes",
+      "app/engine/workflow.py:_generate_specs",
+      "app/engine/workflow.py:workflow",
+      "app/main.py:get_run_plan",
+      "app/main.py:list_plan_versions",
+      "app/main.py:run_events",
+      "app/write_guard.py:WriteConflict",
+      "app/write_guard.py:WriteGuardError",
+      "app/write_guard.py:check_expected_version",
+      "app/write_scope.py:ScopeError",
+      "app/write_scope.py:WriteScope"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 53
+      },
+      {
+        "tool": "search_symbol",
+        "args": {
+          "query": "write_scope",
+          "limit": 15
+        },
+        "chars": 619
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "check_write_scopes",
+          "limit": 20
+        },
+        "chars": 290
+      },
+      {
+        "tool": "search_path",
+        "args": {
+          "query": "write_scope",
+          "limit": 15
+        },
+        "chars": 44
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/planning.py",
+          "symbol": "check_write_scopes",
+          "max_lines": 40
+        },
+        "chars": 1454
+      }
+    ],
+    "extra_round": false
+  },
+  "errors": [
+    "证据绑定失败：子任务 1 target app/engine/planning.py:check_write_scopes 缺少 evidence_id；子任务 1 target app/engine/planning.py:validate_subtasks 缺少 evidence_id；子任务 1 target app/write_scope.py:normalize_pattern 缺少 evidence_id；子任务 1 target app/write_scope.py:dir_in_scope 缺少 evidence_id；子任务 2 target app/engine/planning.py:check_write_scopes 缺少 evidence_id；子任务 2 target app/engine/planning.py:validate_subtasks 缺少 evidence_id；子任务 3 target tests/test_plan_traceability.py:test_scope_overlap_retries_planner_then_succeeds 缺少 evidence_id；子任务 3 target tests/test_plan_traceability.py:test_scope_errors_twice_fall_back_to_single_subtask 缺少 evidence_id；子任务 4 target tests/test_write_scope.py:test_write_inside_scope_succeeds_outside_rejected_with_evidence 缺少 evidence_id；子任务 4 target tests/test_plan_traceability.py:test_modify_with_empty_write_scope_rejected 缺少 evidence_id",
+    "证据绑定失败：coverage 缺少证据文件 app/write_guard.py 的角色；coverage 缺少证据文件 app/main.py 的角色；coverage 缺少证据文件 app/engine/workflow.py 的角色；coverage 缺少证据文件 app/planner/context.py 的角色"
+  ],
+  "usage": {
+    "prompt_tokens": 33149,
+    "completion_tokens": 9717,
+    "total_tokens": 42866
+  },
+  "cost_usd": 0.013363
+}

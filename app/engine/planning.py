@@ -141,6 +141,8 @@ class SubtaskSpec(BaseModel):
     # Paths/globs (workspace-relative) this subtask may write. Empty = read-only.
     # analyze / verify default to read-only; modify must declare a scope.
     write_scope: list[str] = Field(default_factory=list, max_length=30)
+    # Phase-2: concrete edit targets (path/symbol/reason/evidence/status).
+    targets: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     # Goal clause ids (e.g. "C1") this subtask serves (goal traceability).
     serves_clauses: list[str] = Field(default_factory=list, max_length=30)
     # Lineage: ids in the parent plan version this node derives from.
@@ -185,14 +187,52 @@ class SubtaskSpec(BaseModel):
             value = [value]
         return list(dict.fromkeys(str(v).strip() for v in value if str(v).strip()))
 
+    @field_validator("targets", mode="before")
+    @classmethod
+    def _targets(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, dict):
+            value = [value]
+        out: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            out.append({
+                "path": str(item.get("path") or "").strip(),
+                "symbol": str(item.get("symbol") or "").strip(),
+                "reason": str(item.get("reason") or "").strip()[:300],
+                "evidence_ref": str(item.get("evidence_ref") or item.get("evidence") or "").strip()[:200],
+                "evidence_id": str(item.get("evidence_id") or "").strip()[:20],
+                "status": str(item.get("status") or "confirmed").strip().lower() or "confirmed",
+            })
+        return out[:20]
+
     @field_validator("acceptance_criteria", mode="before")
     @classmethod
     def _criteria(cls, value: Any) -> Any:
         if value is None:
             return []
         if isinstance(value, str):
-            return [value]
-        return [str(v).strip()[:500] for v in value if str(v).strip()]
+            return [value.strip()[:500]] if value.strip() else []
+        out: list[str] = []
+        for v in value:
+            if isinstance(v, dict):
+                bits = []
+                if v.get("precondition") or v.get("given"):
+                    bits.append(f"前提:{v.get('precondition') or v.get('given')}")
+                if v.get("expected_behavior") or v.get("expected"):
+                    bits.append(f"期望:{v.get('expected_behavior') or v.get('expected')}")
+                if v.get("test_target") or v.get("test"):
+                    bits.append(f"测试:{v.get('test_target') or v.get('test')}")
+                if v.get("edge_case") or v.get("regression"):
+                    bits.append(f"边界:{v.get('edge_case') or v.get('regression')}")
+                text = " | ".join(str(b) for b in bits) if bits else str(v)
+                if text.strip():
+                    out.append(text.strip()[:500])
+            elif str(v).strip():
+                out.append(str(v).strip()[:500])
+        return out
 
 
 class PlanSpec(BaseModel):
@@ -1637,14 +1677,31 @@ def _clause_text(clauses: list[dict[str, str]] | None) -> str:
 def build_planner_messages(
     goal: str, overview: str, max_subtasks: int,
     clauses: list[dict[str, str]] | None = None,
+    grounding: str | None = None,
+    *,
+    phase2: bool = False,
 ) -> list[dict[str, Any]]:
+    ground = f"{grounding}\n\n" if grounding else ""
+    if phase2:
+        from app.planner.quality import (
+            PHASE2_SCHEMA_HINT, PHASE2_SYSTEM_PROMPT, classify_task_type,
+        )
+        ttype = classify_task_type(goal)
+        system = PHASE2_SYSTEM_PROMPT
+        hint = PHASE2_SCHEMA_HINT
+        type_line = f"判定的任务类型：{ttype}（请在 JSON 中回写 task_type）。\n"
+    else:
+        system = PLANNER_SYSTEM_PROMPT
+        hint = _SCHEMA_HINT
+        type_line = ""
     user = (
         f"用户目标：\n{goal}\n\n{_clause_text(clauses)}"
-        f"项目概览：\n{overview or '（无法读取项目概览）'}\n\n"
-        f"请拆解为不超过 {max_subtasks} 个子任务。\n{_SCHEMA_HINT}"
+        f"项目概览：\n{overview or '（无法读取项目概览）'}\n\n{ground}"
+        f"{type_line}"
+        f"请拆解为不超过 {max_subtasks} 个子任务。\n{hint}"
     )
     return [
-        {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
 
@@ -1834,3 +1891,190 @@ def request_subtasks(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"模型调用失败：{exc}")
     return None, errors
+
+
+
+def request_subtasks_phase2(
+    llm: Any,
+    messages: list[dict[str, Any]],
+    max_subtasks: int,
+    *,
+    goal: str,
+    workspace: str | Path | None,
+    known_ids: set[str] | None = None,
+    known_nodes: list[dict[str, Any]] | None = None,
+    clause_ids: list[str] | None = None,
+    retries: int = 1,
+    usage_acc: dict[str, int] | None = None,
+    raw_specs: list[dict[str, Any]] | None = None,
+    registry: list[dict[str, Any]] | None = None,
+    meta_out: dict[str, Any] | None = None,
+    raw_coverage: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]] | None, list[str], dict[str, int]]:
+    """Validate + enforce phase-2 quality gates; accumulate token usage."""
+    from app.planner.quality import enforce_plan_quality
+
+    errors: list[str] = []
+    usage = usage_acc if usage_acc is not None else {
+        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+    }
+    if raw_specs is not None:
+        convo = None
+        attempts = [raw_specs]
+    else:
+        convo = list(messages)
+        attempts = list(range(retries + 1))
+    for attempt in attempts:
+        content: Any = None
+        try:
+            if raw_specs is not None and attempt is raw_specs:
+                specs = validate_subtasks(
+                    {"subtasks": raw_specs}, max_subtasks, known_ids=known_ids,
+                    known_nodes=known_nodes, clause_ids=clause_ids,
+                )
+            else:
+                response = llm.chat(convo, [])
+                content = getattr(response, "content", None)
+                u = getattr(response, "usage", None) or {}
+                usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + int(u.get("prompt_tokens") or 0)
+                usage["completion_tokens"] = usage.get("completion_tokens", 0) + int(u.get("completion_tokens") or 0)
+                usage["total_tokens"] = usage.get("total_tokens", 0) + int(
+                    u.get("total_tokens") or (int(u.get("prompt_tokens") or 0) + int(u.get("completion_tokens") or 0))
+                )
+                parsed = parse_plan_text(content)
+                if isinstance(parsed, dict):
+                    raw_coverage = parsed.get("coverage")
+                    if meta_out is not None:
+                        meta_out["coverage"] = parsed.get("coverage") or []
+                        meta_out["missing_evidence"] = parsed.get("missing_evidence") or []
+                specs = validate_subtasks(
+                    parsed, max_subtasks, known_ids=known_ids,
+                    known_nodes=known_nodes, clause_ids=clause_ids,
+                )
+            if config.PLANNER_STRICT:
+                enforce_plan_quality(specs, goal, workspace, strict=True)
+            if registry is not None:
+                from app.planner.evidence import check_evidence_binding
+                from app.planner.quality import classify_task_type
+                b_err, b_missing = check_evidence_binding(
+                    specs, registry, task_type=classify_task_type(goal), coverage=raw_coverage)
+                if meta_out is not None:
+                    meta_out["binding_missing"] = b_missing
+                    if raw_coverage is not None:
+                        meta_out["coverage"] = raw_coverage
+                if b_err:
+                    raise PlanError("证据绑定失败：" + "；".join(b_err[:10]))
+            return specs, errors, usage
+        except PlanError as exc:
+            errors.append(str(exc))
+            if raw_specs is not None:
+                break
+            convo = convo + [
+                {"role": "assistant", "content": str(content or "")[:4000]},
+                {
+                    "role": "user",
+                    "content": (
+                        f"上面的计划无效：{exc}。请严格按 phase-2 格式重新输出完整 JSON；"
+                        "write_scope 必须是精确文件；targets.symbol 不确定就标 to-verify。"
+                    ),
+                },
+            ]
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"模型调用失败：{exc}")
+            if raw_specs is not None:
+                break
+    return None, errors, usage
+
+# ---------------------------------------------------------------------------
+# Grounded planning (repo index → grounding pack) + post-parse grounding check
+# ---------------------------------------------------------------------------
+
+def build_grounding(goal: str, workspace: str | Path | None,
+                    max_chars: int | None = None) -> dict[str, Any] | None:
+    """Return the grounding pack dict, or None when disabled / failed."""
+    if not config.PLANNER_GROUNDING:
+        return None
+    try:
+        from app.planner.context import build_grounding_pack
+        root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)
+        limit = max_chars if max_chars is not None else config.PLANNER_CONTEXT_MAX_CHARS
+        return build_grounding_pack(goal, root, max_chars=limit)
+    except Exception:  # noqa: BLE001 — grounding is best-effort; fall back to overview
+        return None
+
+
+def build_grounded_planner_messages(
+    goal: str, workspace: str | Path | None, max_subtasks: int,
+    clauses: list[dict[str, str]] | None = None,
+    *,
+    phase2: bool = False,
+    explore_text: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    overview = build_project_overview(workspace)
+    pack = build_grounding(goal, workspace)
+    ground = None
+    if explore_text:
+        # Prefer explored evidence; keep a short keyword pack as appendix.
+        extra = (pack or {}).get("text") or ""
+        if extra:
+            ground = explore_text + "\n\n### 关键词初筛（补充）\n" + extra[:2500]
+        else:
+            ground = explore_text
+        if pack is None:
+            pack = {"text": explore_text, "files": [], "indexed_files": 0}
+        else:
+            pack = dict(pack)
+            pack["explore_text"] = explore_text
+            pack["text"] = ground
+    elif pack:
+        ground = pack["text"]
+    messages = build_planner_messages(
+        goal, overview, max_subtasks, clauses,
+        grounding=ground, phase2=phase2)
+    return messages, pack
+
+
+_NEW_FILE_HINT = re.compile(r"新建|新增|创建|新文件|create|new file|add (?:a )?new", re.I)
+_MENTIONED_PATH = re.compile(r"(?<![\w/.-])((?:[\w-]+/)*[\w-]+\.(?:py|tsx?|jsx?|toml|json|md|ya?ml))\b")
+
+
+def check_plan_grounding(specs: list[dict[str, Any]],
+                         workspace: str | Path | None) -> list[str]:
+    """Warn about write_scope entries / mentioned files that do not exist.
+
+    Never raises: these are soft warnings recorded on the plan, because a
+    subtask may legitimately create new files.
+    """
+    try:
+        root = resolve_workspace_root(workspace if workspace is not None else config.WORKSPACE_PATH)
+    except Exception:  # noqa: BLE001
+        return []
+    warnings: list[str] = []
+    for spec in specs or []:
+        sid = spec.get("id", "?")
+        text = f"{spec.get('title', '')}\n{spec.get('description', '')}"
+        allows_new = bool(_NEW_FILE_HINT.search(text))
+        for scope in spec.get("write_scope") or []:
+            s = str(scope).strip().replace("\\", "/").lstrip("./") or "."
+            if any(ch in s for ch in "*?["):
+                base = s.split("*")[0].split("?")[0].split("[")[0].rsplit("/", 1)[0]
+                if base and not (root / base).exists():
+                    warnings.append(f"子任务 {sid}: write_scope「{scope}」的目录 {base} 不存在")
+                elif not any(True for _ in root.glob(s)) and not allows_new:
+                    warnings.append(f"子任务 {sid}: write_scope「{scope}」当前匹配不到任何文件")
+                continue
+            if not (root / s).exists():
+                parent_ok = (root / s).parent.exists()
+                if allows_new and parent_ok:
+                    continue
+                warnings.append(
+                    f"子任务 {sid}: write_scope「{scope}」不存在"
+                    + ("（描述未说明是新建文件）" if parent_ok else "（父目录也不存在）"))
+        seen: set[str] = set()
+        for m in _MENTIONED_PATH.findall(text):
+            if m in seen or "/" not in m:
+                continue
+            seen.add(m)
+            if not (root / m).exists() and not allows_new:
+                warnings.append(f"子任务 {sid}: 描述中提到的文件 {m} 不存在")
+    return warnings

@@ -1,0 +1,420 @@
+{
+  "goal": "Add a PLANNER_MAX_DEPTH config that limits the dependency chain depth in validate_subtasks",
+  "task_type": "feature",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 validate_subtasks 与配置读取点",
+      "description": "阅读 app/engine/planning.py 的 validate_subtasks（L241-301）与 app/config.py，确认现有 max_subtasks 参数如何传入、配置项命名与读取惯例（环境变量前缀、默认值写法），并确认依赖链深度当前是否已有检查。产出：PLANNER_MAX_DEPTH 的读取方式、默认值建议、深度计算插入点（依赖存在性/环检测之后）。不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读 validate_subtasks 与 config.py | 期望:明确 PLANNER_MAX_DEPTH 的配置读取方式、默认值、深度检查插入点，形成可执行结论 | 测试:人工审阅（analyze 任务无测试） | 边界:若 config.py 无统一配置读取函数，需说明改用 os.environ 读取的落点"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "目标函数，确认插入深度检查的位置与现有参数形态",
+          "evidence_ref": "L241-L301",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/config.py",
+          "symbol": "to-verify",
+          "reason": "确认配置项定义与读取惯例，用于新增 PLANNER_MAX_DEPTH",
+          "evidence_ref": "grounding 未给出 config.py 符号大纲",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新增 PLANNER_MAX_DEPTH 配置项",
+      "description": "在 app/config.py 中新增 PLANNER_MAX_DEPTH 配置（环境变量读取，整数，含合理默认值如 8），并在 .env.example 中补充同名示例项。属于配置变更，影响运行时行为，风险按 medium 处理；改动可通过还原文件回退。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:未设置环境变量 PLANNER_MAX_DEPTH | 期望:配置返回默认值（如 8），导入 app.config 不报错 | 测试:pytest tests/test_planner_phase2.py -q | 边界:环境变量设为非整数时应回退默认值或抛出明确错误，不得静默为 0",
+        "前提:设置 PLANNER_MAX_DEPTH=3 | 期望:配置读取返回 3 | 测试:pytest tests/test_planner_phase2.py -q | 边界:设为 0 或负数时的处理需明确（建议回退默认或拒绝）"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/config.py",
+        ".env.example"
+      ],
+      "targets": [
+        {
+          "path": "app/config.py",
+          "symbol": "to-verify",
+          "reason": "新增 PLANNER_MAX_DEPTH 常量/读取逻辑，供 validate_subtasks 使用",
+          "evidence_ref": "grounding 未给出 config.py 符号大纲",
+          "status": "to-verify"
+        },
+        {
+          "path": ".env.example",
+          "symbol": "to-verify",
+          "reason": "补充 PLANNER_MAX_DEPTH 示例，保持配置文档一致",
+          "evidence_ref": "项目根目录存在 .env.example",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "在 validate_subtasks 中实现依赖链深度限制",
+      "description": "在 app/engine/planning.py 的 validate_subtasks 中，于依赖存在性/自依赖/环检测之后，计算每个子任务的依赖链深度（沿 depends_on 的最长路径长度），超过 PLANNER_MAX_DEPTH 时抛出 PlanError 并给出含超限子任务 id 与实际深度的错误信息。深度计算复用已有图遍历思路（参考 _ancestors L304-321），避免重复实现。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:PLANNER_MAX_DEPTH=2，提交 A->B->C 的线性依赖链 | 期望:validate_subtasks 抛出 PlanError，错误信息包含超限子任务 id 与深度 | 测试:pytest tests/test_plan_traceability.py -q | 边界:链长度恰好等于上限时应通过，等于上限+1 时拒绝",
+        "前提:PLANNER_MAX_DEPTH=2，提交 A->B 的链 | 期望:validate_subtasks 正常返回校验后的子任务列表 | 测试:pytest tests/test_plan_traceability.py -q | 边界:无依赖的独立子任务深度为 0/1，不应被误判超限",
+        "前提:已存在环的依赖图 | 期望:仍由原有环检测先报错，深度检查不产生误导性错误 | 测试:pytest tests/test_plan_traceability.py -q | 边界:环检测与深度检查的报错顺序需稳定"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "在此加入依赖链深度校验，超限抛 PlanError",
+          "evidence_ref": "L241-L301",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "_ancestors",
+          "reason": "复用其图遍历思路计算最长依赖链深度",
+          "evidence_ref": "L304-L321",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充深度限制单元测试",
+      "description": "新建 tests/test_planner_max_depth.py（父目录 tests/ 已存在），覆盖：默认值下超深链被拒、恰好等于上限通过、独立子任务不受影响、环境变量覆盖生效、错误信息含子任务 id。使用 monkeypatch 设置 PLANNER_MAX_DEPTH。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:monkeypatch 设置 PLANNER_MAX_DEPTH=2 并提交 3 层依赖链 | 期望:validate_subtasks 抛出 PlanError，错误信息含超限子任务 id | 测试:pytest tests/test_planner_max_depth.py -q | 边界:链长度恰好等于上限时通过",
+        "前提:未设置环境变量，提交超过默认上限的深链 | 期望:按默认值拒绝并抛 PlanError | 测试:pytest tests/test_planner_max_depth.py -q | 边界:独立子任务（无依赖）不受深度限制影响"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_planner_max_depth.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_planner_max_depth.py",
+          "symbol": "to-verify",
+          "reason": "新建测试文件，验证 PLANNER_MAX_DEPTH 行为",
+          "evidence_ref": "tests/ 目录已存在，参考 tests/test_plan_traceability.py 的构造方式",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "回归验证受影响调用方",
+      "description": "运行受影响调用方的测试，确认新增深度校验未破坏现有计划校验行为：request_subtasks/request_subtasks_phase2、app/main.py:_validate_remaining、tests/test_parallel.py、tests/test_plan_traceability.py。",
+      "depends_on": [
+        "3",
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已完成子任务 3、4 的改动 | 期望:现有计划校验与并行相关测试全部通过，无新增失败 | 测试:pytest tests/test_plan_traceability.py tests/test_parallel.py -q | 边界:默认 PLANNER_MAX_DEPTH 下现有测试用例的依赖链均未超限",
+        "前提:运行完整测试套件 | 期望:无因深度校验引入的回归失败 | 测试:pytest -q | 边界:环境变量残留 PLANNER_MAX_DEPTH 时测试应显式 monkeypatch 隔离"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "reason": "调用 validate_subtasks，需确认未因深度校验回归",
+          "evidence_ref": "L1859",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "reason": "调用 validate_subtasks，需确认未因深度校验回归",
+          "evidence_ref": "L1896",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_validate_remaining",
+          "reason": "调用 validate_subtasks，需确认未因深度校验回归",
+          "evidence_ref": "L457",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 validate_subtasks 与配置读取点",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/config.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "目标函数，确认插入深度检查的位置与现有参数形态",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/config.py",
+          "symbol": "to-verify",
+          "line": null,
+          "reason": "确认配置项定义与读取惯例，用于新增 PLANNER_MAX_DEPTH",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读 validate_subtasks 与 config.py | 期望:明确 PLANNER_MAX_DEPTH 的配置读取方式、默认值、深度检查插入点，形成可执行结论 | 测试:人工审阅（analyze 任务无测试） | 边界:若 config.py 无统一配置读取函数，需说明改用 os.environ 读取的落点"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "新增 PLANNER_MAX_DEPTH 配置项",
+      "kind": "modify",
+      "files": [
+        "app/config.py",
+        "env.example"
+      ],
+      "symbols": [
+        {
+          "path": "app/config.py",
+          "symbol": "to-verify",
+          "line": null,
+          "reason": "新增 PLANNER_MAX_DEPTH 常量/读取逻辑，供 validate_subtasks 使用",
+          "status": "to-verify"
+        },
+        {
+          "path": "env.example",
+          "symbol": "to-verify",
+          "line": null,
+          "reason": "补充 PLANNER_MAX_DEPTH 示例，保持配置文档一致",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [],
+      "test_command": "pytest tests/test_planner_phase2.py -q",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:未设置环境变量 PLANNER_MAX_DEPTH | 期望:配置返回默认值（如 8），导入 app.config 不报错 | 测试:pytest tests/test_planner_phase2.py -q | 边界:环境变量设为非整数时应回退默认值或抛出明确错误，不得静默为 0",
+        "前提:设置 PLANNER_MAX_DEPTH=3 | 期望:配置读取返回 3 | 测试:pytest tests/test_planner_phase2.py -q | 边界:设为 0 或负数时的处理需明确（建议回退默认或拒绝）"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "在 validate_subtasks 中实现依赖链深度限制",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "在此加入依赖链深度校验，超限抛 PlanError",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "_ancestors",
+          "line": 304,
+          "reason": "复用其图遍历思路计算最长依赖链深度",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "_ancestors",
+          "lines": "304-321",
+          "text": "304| def _ancestors(graph: dict[str, list[str]]) -> dict[str, set[str]]:\n305|     memo: dict[str, set[str]] = {}\n306| \n307|     def visit(node: str, stack: frozenset[str]) -> set[str]:\n308|         if node in memo:\n309|             return memo[node]\n310|         result: set[str] = set()\n311|         for dep in graph.get(node, []):\n312|             if dep in stack:\n313|                 continue\n314|             result.add(dep)\n315|             result |= visit(dep, stack | {dep})\n316|         memo[node] = result"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py -q",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:PLANNER_MAX_DEPTH=2，提交 A->B->C 的线性依赖链 | 期望:validate_subtasks 抛出 PlanError，错误信息包含超限子任务 id 与深度 | 测试:pytest tests/test_plan_traceability.py -q | 边界:链长度恰好等于上限时应通过，等于上限+1 时拒绝",
+        "前提:PLANNER_MAX_DEPTH=2，提交 A->B 的链 | 期望:validate_subtasks 正常返回校验后的子任务列表 | 测试:pytest tests/test_plan_traceability.py -q | 边界:无依赖的独立子任务深度为 0/1，不应被误判超限",
+        "前提:已存在环的依赖图 | 期望:仍由原有环检测先报错，深度检查不产生误导性错误 | 测试:pytest tests/test_plan_traceability.py -q | 边界:环检测与深度检查的报错顺序需稳定"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "补充深度限制单元测试",
+      "kind": "modify",
+      "files": [
+        "tests/test_planner_max_depth.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_planner_max_depth.py",
+          "symbol": "to-verify",
+          "line": null,
+          "reason": "新建测试文件，验证 PLANNER_MAX_DEPTH 行为",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [],
+      "test_command": "pytest tests/test_planner_max_depth.py -q",
+      "depends_on": [
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:monkeypatch 设置 PLANNER_MAX_DEPTH=2 并提交 3 层依赖链 | 期望:validate_subtasks 抛出 PlanError，错误信息含超限子任务 id | 测试:pytest tests/test_planner_max_depth.py -q | 边界:链长度恰好等于上限时通过",
+        "前提:未设置环境变量，提交超过默认上限的深链 | 期望:按默认值拒绝并抛 PlanError | 测试:pytest tests/test_planner_max_depth.py -q | 边界:独立子任务（无依赖）不受深度限制影响"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "回归验证受影响调用方",
+      "kind": "verify",
+      "files": [
+        "app/engine/planning.py",
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "line": 1859,
+          "reason": "调用 validate_subtasks，需确认未因深度校验回归",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "line": 1896,
+          "reason": "调用 validate_subtasks，需确认未因深度校验回归",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_validate_remaining",
+          "line": 457,
+          "reason": "调用 validate_subtasks，需确认未因深度校验回归",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks",
+          "lines": "1859-1892",
+          "text": "1859| def request_subtasks(\n1860|     llm: Any,\n1861|     messages: list[dict[str, Any]],\n1862|     max_subtasks: int,\n1863|     *,\n1864|     known_ids: set[str] | None = None,\n1865|     known_nodes: list[dict[str, Any]] | None = None,\n1866|     clause_ids: list[str] | None = None,\n1867|     retries: int = 1,\n1868| ) -> tuple[list[dict[str, Any]] | None, list[str]]:\n1869|     errors: list[str] = []\n1870|     convo = list(messages)\n1871|     for _ in range(retries + 1):"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "request_subtasks_phase2",
+          "lines": "1896-1965",
+          "text": "1896| def request_subtasks_phase2(\n1897|     llm: Any,\n1898|     messages: list[dict[str, Any]],\n1899|     max_subtasks: int,\n1900|     *,\n1901|     goal: str,\n1902|     workspace: str | Path | None,\n1903|     known_ids: set[str] | None = None,\n1904|     known_nodes: list[dict[str, Any]] | None = None,\n1905|     clause_ids: list[str] | None = None,\n1906|     retries: int = 1,\n1907|     usage_acc: dict[str, int] | None = None,\n1908|     raw_specs: list[dict[str, Any]] | None = None,"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_validate_remaining",
+          "lines": "457-462",
+          "text": "457| def _validate_remaining(plan: dict, raw: list, done: list[dict]) -> list[dict]:\n458|     try:\n459|         return P.validate_subtasks(raw, max(config.MAX_SUBTASKS, len(raw)),\n460|                                    known_nodes=done, clause_ids=P.clause_ids_of(plan))\n461|     except P.PlanError as exc:\n462|         raise HTTPException(status_code=400, detail=str(exc)) from exc"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py tests/test_parallel.py -q",
+      "depends_on": [
+        "3",
+        "4"
+      ],
+      "acceptance_criteria": [
+        "前提:已完成子任务 3、4 的改动 | 期望:现有计划校验与并行相关测试全部通过，无新增失败 | 测试:pytest tests/test_plan_traceability.py tests/test_parallel.py -q | 边界:默认 PLANNER_MAX_DEPTH 下现有测试用例的依赖链均未超限",
+        "前提:运行完整测试套件 | 期望:无因深度校验引入的回归失败 | 测试:pytest -q | 边界:环境变量残留 PLANNER_MAX_DEPTH 时测试应显式 monkeypatch 隔离"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务 2 的 write_scope 含 .env.example，但 grounding 未确认该文件真实存在（仅候选描述声称），且 modify 的 write_scope 必须是精确已存在文件路径；需在分析步骤中确认存在性，否则不得写入 write_scope。",
+      "子任务 2 与 4 的 targets 使用 symbol=to-verify 且 status=to-verify，但 modify 的 targets 应尽量 confirmed；新建测试文件与新增配置项应在描述中明确标注为新建，而非用 to-verify 占位。",
+      "子任务 1 的 targets 含 app/config.py 但 grounding 未给出该文件符号大纲，status=to-verify 可接受，但需在描述中明确若 config.py 不存在则改用 os.environ 的落点，当前描述已提及但未与 write_scope 决策联动。",
+      "子任务 3 的验收标准中测试目标指向 tests/test_plan_traceability.py，但该文件是既有回归测试，新增深度限制测试应指向新建的 tests/test_planner_max_depth.py；测试目标与子任务 4 重复且不精确。",
+      "子任务 5 的 verify 依赖 3、4 正确，但验收标准第二条 'pytest -q' 全量套件过于宽泛，且未明确 PLANNER_MAX_DEPTH 环境变量隔离方式；应改为显式 monkeypatch 或指定测试文件。",
+      "子任务 2 风险标 medium 但描述称'可通过还原文件回退'，reversible=true 与 risk=medium 的配置变更理由不充分；配置项新增本身低风险，应下调为 low 或说明为何 medium。",
+      "缺少对 PLANNER_MAX_DEPTH 默认值与现有测试用例依赖链深度的兼容性分析：若默认值过小会导致既有测试失败，子任务 1 应产出既有测试中最大依赖链深度的统计。",
+      "子任务 4 的 write_scope 为新建文件 tests/test_planner_max_depth.py，符合新建文件须在描述中标明的要求，但 targets 的 evidence_ref 仅写 'tests/ 目录已存在'，应引用具体参考文件 tests/test_plan_traceability.py 的真实符号（如 test_modify_with_empty_write_scope_rejected）。"
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 16634,
+    "completion_tokens": 6645,
+    "total_tokens": 23279
+  },
+  "cost_usd": 0.007448
+}

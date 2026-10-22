@@ -1,0 +1,1189 @@
+{
+  "goal": "分析计划被用户拒绝后重新拆解的完整流程，说明 MAX_PLAN_REJECTIONS 在哪里生效",
+  "task_type": "analysis",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 定义与生效点",
+      "description": "在代码库中检索 MAX_PLAN_REJECTIONS 常量/配置的定义位置（app/config.py 或 app/engine/planning.py 等），确认其默认值、可覆盖方式（环境变量/配置项），并定位所有读取该值的调用点。仅阅读，不修改。若在已索引证据中找不到定义，标记为 to-verify 并在 missing_evidence 中列出。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定工作区源码 | 期望:能给出 MAX_PLAN_REJECTIONS 的定义文件:行号、默认值、读取该值的所有调用点清单 | 测试:grep -rn \"MAX_PLAN_REJECTIONS\" app/ | 边界:若常量不存在或命名不同，需在 missing_evidence 中列出并说明检索范围"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "reason": "计划被拒绝/重拆时可能抛出或捕获 PlanError，是拒绝流程的关键符号；MAX_PLAN_REJECTIONS 定义待检索，暂以该文件为阅读入口",
+          "evidence_ref": "L117-L118",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "梳理计划拒绝后重新拆解的完整流程",
+      "description": "沿审批入口（app/main.py 计划审批相关路由、app/schemas.py:PlanApprovalRequest）追踪用户拒绝计划后的控制流：拒绝如何写入状态、如何触发重新拆解（replan）、新版本如何通过 append_plan_version 记录、goal_clauses 如何冻结保留。重点阅读 app/engine/workflow.py 的调度节点（pick_next_node）、app/engine/planning.py 的 validate_subtasks/check_write_scopes，以及 app/storage.py 的 save_plan/append_plan_version。仅阅读，不修改。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定上述符号源码 | 期望:输出拒绝→状态写入→触发重拆→新计划校验→新版本落库的逐步流程说明，标注每步的文件:行号 | 测试:pytest tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses | 边界:需说明 goal_clauses 在重拆后是否保持不变（冻结语义）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/schemas.py",
+          "symbol": "PlanApprovalRequest",
+          "reason": "计划审批请求体，拒绝动作的入口数据结构",
+          "evidence_ref": "L87-L104",
+          "evidence_id": "EV14",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "reason": "调度器决定暂停/退出/继续，拒绝后重拆的流转在此体现",
+          "evidence_ref": "L736-L812",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "append_plan_version",
+          "reason": "只追加的计划版本历史，拒绝重拆产生新版本的落库点",
+          "evidence_ref": "L467-L488",
+          "evidence_id": "EV13",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "save_plan",
+          "reason": "计划保存/更新入口，拒绝状态与重拆结果写入处",
+          "evidence_ref": "L336-L359",
+          "evidence_id": "EV12",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "重拆后的新计划需通过结构校验，是重拆闭环的一环",
+          "evidence_ref": "L242-L302",
+          "evidence_id": "EV59",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "用现有测试验证拒绝重拆与版本记录行为",
+      "description": "运行与计划拒绝/重拆/版本历史相关的现有测试，确认流程描述与实际行为一致，并据此在结论中标注 MAX_PLAN_REJECTIONS 生效的具体位置（若测试覆盖到上限分支）。仅运行测试，不修改代码。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:已安装 dev 依赖（pytest） | 期望:三个测试全部通过，输出与流程描述一致 | 测试:pytest tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses tests/test_plan_traceability.py::test_goal_and_clauses_are_frozen tests/test_plan_traceability.py::test_structural_replan_creates_new_version_with_parent | 边界:若 MAX_PLAN_REJECTIONS 上限分支无测试覆盖，需在结论中标注为未验证并建议补充测试"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_rejection_records_new_version_keeping_clauses",
+          "reason": "直接覆盖拒绝后记录新版本并保留条款的行为",
+          "evidence_ref": "L242-L258",
+          "evidence_id": "EV32",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_goal_and_clauses_are_frozen",
+          "reason": "验证目标与条款冻结，支撑重拆后条款不变的结论",
+          "evidence_ref": "L180-L192",
+          "evidence_id": "EV33",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_structural_replan_creates_new_version_with_parent",
+          "reason": "验证重拆产生带 parent 的新版本，支撑版本链结论",
+          "evidence_ref": "L223-L239",
+          "evidence_id": "EV31",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/engine/planning.py",
+      "role": "read",
+      "reason": "PlanError 与 validate_subtasks 是拒绝/重拆校验关键符号，也是 MAX_PLAN_REJECTIONS 检索入口",
+      "evidence_id": "EV2"
+    },
+    {
+      "path": "app/main.py",
+      "role": "read",
+      "reason": "计划审批与版本查询路由（list_plan_versions/get_plan_version）承载拒绝后重拆的 API 入口",
+      "evidence_id": "EV5"
+    },
+    {
+      "path": "app/write_scope.py",
+      "role": "read",
+      "reason": "WriteScope 校验在重拆计划写入范围时参与拒绝判定，需确认是否与 MAX_PLAN_REJECTIONS 流程交互",
+      "evidence_id": "EV18"
+    },
+    {
+      "path": "app/schemas.py",
+      "role": "read",
+      "reason": "PlanApprovalRequest 是拒绝动作入口",
+      "evidence_id": "EV14"
+    },
+    {
+      "path": "app/storage.py",
+      "role": "read",
+      "reason": "save_plan/append_plan_version 是拒绝重拆结果落库点",
+      "evidence_id": "EV13"
+    },
+    {
+      "path": "app/engine/workflow.py",
+      "role": "read",
+      "reason": "pick_next_node 调度器体现拒绝后重拆流转",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "tests/test_plan_traceability.py",
+      "role": "verify",
+      "reason": "覆盖拒绝记录新版本、条款冻结、结构重拆版本链",
+      "evidence_id": "EV32"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/workflow.py",
+      "symbol": "pick_next_node",
+      "kind": "definition",
+      "line_start": 736,
+      "line_end": 812,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/planning.py",
+      "symbol": "PlanError",
+      "kind": "definition",
+      "line_start": 117,
+      "line_end": 118,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/engine/planning.py",
+      "symbol": "next_ready_subtask",
+      "kind": "definition",
+      "line_start": 844,
+      "line_end": 860,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/engine/planning.py",
+      "symbol": "subtask_delivery",
+      "kind": "definition",
+      "line_start": 1140,
+      "line_end": 1183,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/main.py",
+      "symbol": "list_plan_versions",
+      "kind": "definition",
+      "line_start": 616,
+      "line_end": 623,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/main.py",
+      "symbol": "get_plan_version",
+      "kind": "definition",
+      "line_start": 627,
+      "line_end": 633,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/main.py",
+      "symbol": "_plan_or_404",
+      "kind": "definition",
+      "line_start": 348,
+      "line_end": 352,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/engine/workflow.py",
+      "symbol": "execute_subtask_node",
+      "kind": "definition",
+      "line_start": 1074,
+      "line_end": 1092,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/engine/workflow.py",
+      "symbol": "MemoryPlanStore",
+      "kind": "definition",
+      "line_start": 84,
+      "line_end": 154,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/engine/workflow.py",
+      "symbol": "StoragePlanStore",
+      "kind": "definition",
+      "line_start": 157,
+      "line_end": 201,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "app/storage.py",
+      "symbol": "get_plan",
+      "kind": "definition",
+      "line_start": 315,
+      "line_end": 322,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "app/storage.py",
+      "symbol": "save_plan",
+      "kind": "definition",
+      "line_start": 336,
+      "line_end": 359,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "app/storage.py",
+      "symbol": "append_plan_version",
+      "kind": "definition",
+      "line_start": 467,
+      "line_end": 488,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "app/schemas.py",
+      "symbol": "PlanApprovalRequest",
+      "kind": "definition",
+      "line_start": 87,
+      "line_end": 104,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "app/schemas.py",
+      "symbol": "SubtaskEditRequest",
+      "kind": "definition",
+      "line_start": 112,
+      "line_end": 126,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "app/schemas.py",
+      "symbol": "SubtaskConfirmRequest",
+      "kind": "definition",
+      "line_start": 107,
+      "line_end": 109,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "app/write_scope.py",
+      "symbol": "WriteScope._reject",
+      "kind": "definition",
+      "line_start": 197,
+      "line_end": 212,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "app/write_scope.py",
+      "symbol": "WriteScope",
+      "kind": "definition",
+      "line_start": 176,
+      "line_end": 234,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "app/engine/workflow.py",
+      "symbol": "_generate_specs",
+      "kind": "definition",
+      "line_start": 575,
+      "line_end": 621,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "app/engine/planning.py",
+      "symbol": "build_grounded_planner_messages",
+      "kind": "definition",
+      "line_start": 2006,
+      "line_end": 2034,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "app/engine/workflow.py",
+      "symbol": "WorkflowState",
+      "kind": "definition",
+      "line_start": 474,
+      "line_end": 501,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "app/engine/workflow.py",
+      "symbol": "build_workflow",
+      "kind": "definition",
+      "line_start": 1531,
+      "line_end": 1572,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "app/engine/workflow.py",
+      "symbol": "run_workflow",
+      "kind": "definition",
+      "line_start": 1609,
+      "line_end": 1661,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "tests/conftest.py",
+      "symbol": "_legacy_workflow_defaults",
+      "kind": "test",
+      "line_start": 67,
+      "line_end": 74,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "tests/test_workflow.py",
+      "symbol": "test_workflow_fails_when_no_tool_executed",
+      "kind": "test",
+      "line_start": 47,
+      "line_end": 54,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "tests/test_workflow.py",
+      "symbol": "test_workflow_fails_without_api_key",
+      "kind": "test",
+      "line_start": 57,
+      "line_end": 63,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_skipped_dependency_does_not_count_as_done",
+      "kind": "test",
+      "line_start": 224,
+      "line_end": 228,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_analyze_with_only_failed_tool_calls_is_not_verified",
+      "kind": "test",
+      "line_start": 63,
+      "line_end": 70,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_modify_with_failed_verification_is_not_covered",
+      "kind": "test",
+      "line_start": 84,
+      "line_end": 99,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+      "kind": "test",
+      "line_start": 195,
+      "line_end": 220,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_structural_replan_creates_new_version_with_parent",
+      "kind": "test",
+      "line_start": 223,
+      "line_end": 239,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_rejection_records_new_version_keeping_clauses",
+      "kind": "test",
+      "line_start": 242,
+      "line_end": 258,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "test_goal_and_clauses_are_frozen",
+      "kind": "test",
+      "line_start": 180,
+      "line_end": 192,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_late_result_from_superseded_attempt_is_discarded",
+      "kind": "test",
+      "line_start": 311,
+      "line_end": 351,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_result_never_writes_any_outcome",
+      "kind": "test",
+      "line_start": 359,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_recorder_cannot_persist_state_or_status",
+      "kind": "test",
+      "line_start": 417,
+      "line_end": 461,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV37",
+      "path": "tests/test_task_graph.py",
+      "symbol": "Recorder.__init__",
+      "kind": "test",
+      "line_start": 116,
+      "line_end": 120,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV38",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_high_risk_confirmed_then_runs",
+      "kind": "test",
+      "line_start": 404,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV39",
+      "path": "tests/test_task_graph.py",
+      "symbol": "test_cancel_requested_during_run_stops_at_subtask_boundary",
+      "kind": "test",
+      "line_start": 456,
+      "line_end": 469,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV40",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_final_verify_failure_persists_structured_report",
+      "kind": "test",
+      "line_start": 130,
+      "line_end": 153,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV41",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_final_verify_replan_limit_persists_failure_report",
+      "kind": "test",
+      "line_start": 156,
+      "line_end": 180,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV42",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_long_result_preserved_in_full_and_summary_is_marked",
+      "kind": "test",
+      "line_start": 208,
+      "line_end": 226,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV43",
+      "path": "tests/test_delivery_integrity.py",
+      "symbol": "test_api_run_detail_and_plan_return_failure_report",
+      "kind": "test",
+      "line_start": 252,
+      "line_end": 297,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV44",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_crash_recovery_with_two_expired_leases",
+      "kind": "test",
+      "line_start": 246,
+      "line_end": 262,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV45",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_live_foreign_lease_blocks_only_that_subtask",
+      "kind": "test",
+      "line_start": 265,
+      "line_end": 275,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV46",
+      "path": "tests/test_parallel.py",
+      "symbol": "_crashed_plan",
+      "kind": "test",
+      "line_start": 230,
+      "line_end": 243,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV47",
+      "path": "tests/test_plan_concurrency.py",
+      "symbol": "_write_plan_loop",
+      "kind": "test",
+      "line_start": 27,
+      "line_end": 50,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV48",
+      "path": "tests/test_plan_concurrency.py",
+      "symbol": "test_freeze_check_reads_inside_the_write_transaction",
+      "kind": "test",
+      "line_start": 133,
+      "line_end": 153,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV49",
+      "path": "tests/test_edge_034.py",
+      "symbol": "test_run_command_always_scratch_when_scoped",
+      "kind": "test",
+      "line_start": 162,
+      "line_end": 179,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV50",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_readonly_subtask_refuses_write_command_before_start",
+      "kind": "test",
+      "line_start": 159,
+      "line_end": 174,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV51",
+      "path": "tests/test_edge_035.py",
+      "symbol": "test_cancel_kills_running_command",
+      "kind": "test",
+      "line_start": 187,
+      "line_end": 215,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV52",
+      "path": "tests/test_edge_036.py",
+      "symbol": "test_readonly_refuses_networky_without_approval",
+      "kind": "test",
+      "line_start": 64,
+      "line_end": 86,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV53",
+      "path": "tests/test_limits_opt.py",
+      "symbol": "test_run_project_command_pytest_uses_scratch",
+      "kind": "test",
+      "line_start": 83,
+      "line_end": 102,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV54",
+      "path": "tests/test_write_scope.py",
+      "symbol": "_ctx",
+      "kind": "test",
+      "line_start": 61,
+      "line_end": 64,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV55",
+      "path": "tests/test_write_scope.py",
+      "symbol": "test_ruff_fix_inside_scope_passes_scope_check",
+      "kind": "test",
+      "line_start": 132,
+      "line_end": 137,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV56",
+      "path": "tests/test_planner_phase2.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 27,
+      "line_end": 27,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV57",
+      "path": "tests/test_task_graph.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 351,
+      "line_end": 351,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV58",
+      "path": "tests/test_plan_traceability.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 251,
+      "line_end": 251,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV59",
+      "path": "app/engine/planning.py",
+      "symbol": "validate_subtasks",
+      "kind": "caller",
+      "line_start": 242,
+      "line_end": 302,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV60",
+      "path": "app/engine/planning.py",
+      "symbol": "check_write_scopes",
+      "kind": "caller",
+      "line_start": 325,
+      "line_end": 349,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 定义与生效点",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "line": 117,
+          "reason": "计划被拒绝/重拆时可能抛出或捕获 PlanError，是拒绝流程的关键符号；MAX_PLAN_REJECTIONS 定义待检索，暂以该文件为阅读入口",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "lines": "117-118",
+          "text": "117| class PlanError(ValueError):\n118|     \"\"\"Raised when a plan / task-graph is structurally invalid.\"\"\""
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:给定工作区源码 | 期望:能给出 MAX_PLAN_REJECTIONS 的定义文件:行号、默认值、读取该值的所有调用点清单 | 测试:grep -rn \"MAX_PLAN_REJECTIONS\" app/ | 边界:若常量不存在或命名不同，需在 missing_evidence 中列出并说明检索范围"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "梳理计划拒绝后重新拆解的完整流程",
+      "kind": "analyze",
+      "files": [
+        "app/schemas.py",
+        "app/engine/workflow.py",
+        "app/storage.py",
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/schemas.py",
+          "symbol": "PlanApprovalRequest",
+          "line": 87,
+          "reason": "计划审批请求体，拒绝动作的入口数据结构",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "line": 736,
+          "reason": "调度器决定暂停/退出/继续，拒绝后重拆的流转在此体现",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "append_plan_version",
+          "line": 467,
+          "reason": "只追加的计划版本历史，拒绝重拆产生新版本的落库点",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "save_plan",
+          "line": 336,
+          "reason": "计划保存/更新入口，拒绝状态与重拆结果写入处",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 242,
+          "reason": "重拆后的新计划需通过结构校验，是重拆闭环的一环",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/schemas.py",
+          "symbol": "PlanApprovalRequest",
+          "lines": "87-104",
+          "text": "87| class PlanApprovalRequest(BaseModel):\n88|     \"\"\"Approve or reject the pending plan version.\n89| \n90|     ``decision=\"reject\"`` sends the run back to decompose with ``feedback``\n91|     (bounded by ``MAX_PLAN_REJECTIONS``). ``subtasks`` (approve only) replaces\n92|     the not-yet-done part of the graph with a user-edited version.\n93|     ``approved`` is accepted as a legacy alias of ``decision``.\n94|     \"\"\"\n95| \n96|     decision: Literal[\"approve\", \"reject\"] | None = None\n97|     approved: bool | None = None\n98|     feedback: str | None = Field(default=None, max_length=4000)\n99|     subtasks: list[dict[str, Any]] | None = None"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "lines": "736-812",
+          "text": "736| def pick_next_node(state: WorkflowState) -> dict[str, Any]:\n737|     \"\"\"Scheduler: decide what to launch, whether to wait, pause or exit.\n738| \n739|     Pauses / exits are only taken when nothing is in flight (drain first).\"\"\"\n740|     plan = state[\"plan\"]\n741|     ctx = state[\"ctx\"]\n742|     in_flight = ctx.in_flight()\n743|     fresh = state[\"store\"].load()\n744|     if isinstance(fresh, dict) and fresh.get(\"cancel_requested\"):\n745|         plan[\"cancel_requested\"] = True\n746|     if plan.get(\"cancel_requested\"):\n747|         ctx.cancel.set(\"用户取消\")\n748|         return {\"route\": \"wait\", \"launch\": []} if in_flight else {\"route\": \"cancel\"}"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "append_plan_version",
+          "lines": "467-488",
+          "text": "467| def append_plan_version(\n468|     run_id: str, entry: dict[str, Any], db_path: Path | None = None\n469| ) -> bool:\n470|     \"\"\"Insert one immutable (version, revision) snapshot. Never overwrites:\n471|     returns ``False`` when that (version, revision) already exists.\"\"\"\n472|     with _connect(db_path) as conn:\n473|         try:\n474|             conn.execute(\n475|                 \"INSERT INTO plan_versions (run_id, version, revision, parent_version, \"\n476|                 \"parent_revision, reason, failure_class, created_at, plan_json, diff_json) \"\n477|                 \"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\",\n478|                 (run_id, int(entry[\"version\"]), int(entry.get(\"revision\") or 1),\n479|                  entry.get(\"parent_version\"), entry.get(\"parent_revision\"),"
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:给定上述符号源码 | 期望:输出拒绝→状态写入→触发重拆→新计划校验→新版本落库的逐步流程说明，标注每步的文件:行号 | 测试:pytest tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses | 边界:需说明 goal_clauses 在重拆后是否保持不变（冻结语义）"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "用现有测试验证拒绝重拆与版本记录行为",
+      "kind": "verify",
+      "files": [
+        "tests/test_plan_traceability.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_rejection_records_new_version_keeping_clauses",
+          "line": 242,
+          "reason": "直接覆盖拒绝后记录新版本并保留条款的行为",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_goal_and_clauses_are_frozen",
+          "line": 180,
+          "reason": "验证目标与条款冻结，支撑重拆后条款不变的结论",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_structural_replan_creates_new_version_with_parent",
+          "line": 223,
+          "reason": "验证重拆产生带 parent 的新版本，支撑版本链结论",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_rejection_records_new_version_keeping_clauses",
+          "lines": "242-258",
+          "text": "242| def test_rejection_records_new_version_keeping_clauses(planner_on, monkeypatch):\n243|     monkeypatch.setattr(config, \"PLAN_REQUIRES_APPROVAL\", True)\n244|     llm = PlannerLLM([plan_json(sub(\"1\")), plan_json(sub(\"1\"), sub(\"2\", deps=[\"1\"]))])\n245|     make_run_row(\"run-rv\")\n246|     store = W.StoragePlanStore(\"run-rv\")\n247|     run(\"分析项目结构\", llm, Recorder(store), FakeExecutor({}), monkeypatch, planner_on,\n248|         run_id=\"run-rv\")\n249|     plan = store.load()\n250|     plan[\"approval_status\"] = P.PLAN_REJECTED\n251|     plan[\"plan_rejections\"] = 1\n252|     plan[\"feedback\"] = [\"拆细一点\"]\n253|     store.save(plan)\n254|     run(\"分析项目结构\", llm, Recorder(store), FakeExecutor({}), monkeypatch, planner_on,"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_goal_and_clauses_are_frozen",
+          "lines": "180-192",
+          "text": "180| def test_goal_and_clauses_are_frozen(planner_on):\n181|     make_run_row(\"run-frozen\")\n182|     plan = P.new_plan_record([sub(\"1\")], \"llm\", requires_approval=False, goal=\"分析项目结构\",\n183|                              goal_clauses=P.split_goal_clauses(\"分析项目结构\"))\n184|     storage.save_plan(\"run-frozen\", plan)\n185|     changed = dict(plan, goal_clauses=[{\"id\": \"C1\", \"text\": \"别的目标\"}])\n186|     with pytest.raises(storage.GoalImmutableError):\n187|         storage.save_plan(\"run-frozen\", changed)\n188|     store = W.MemoryPlanStore()\n189|     store.save(plan)\n190|     with pytest.raises(ValueError):\n191|         store.save(changed)\n192|     assert storage.get_frozen_goal(\"run-frozen\")[\"goal\"] == \"分析项目结构\""
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_structural_replan_creates_new_version_with_parent",
+          "lines": "223-239",
+          "text": "223| def test_structural_replan_creates_new_version_with_parent(planner_on, monkeypatch):\n224|     monkeypatch.setattr(config, \"PLAN_REQUIRES_APPROVAL\", True)\n225|     first = plan_json(sub(\"1\"), sub(\"2\", deps=[\"1\"]))\n226|     structural = plan_json(sub(\"2\", deps=[\"1\"]), sub(\"2b\", title=\"先安装依赖\", deps=[\"1\"]))\n227|     llm = PlannerLLM([first, structural])\n228|     make_run_row(\"run-sv\")\n229|     store = W.StoragePlanStore(\"run-sv\")\n230|     rec = Recorder(store)\n231|     ex = FakeExecutor({\"2\": [failed()]})\n232|     run(\"分析项目结构\", llm, rec, ex, monkeypatch, planner_on, run_id=\"run-sv\")\n233|     _approve(store)\n234|     run(\"分析项目结构\", llm, rec, ex, monkeypatch, planner_on, run_id=\"run-sv\")\n235|     versions = storage.list_plan_versions(\"run-sv\")"
+        }
+      ],
+      "test_command": "pytest）",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:已安装 dev 依赖（pytest） | 期望:三个测试全部通过，输出与流程描述一致 | 测试:pytest tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses tests/test_plan_traceability.py::test_goal_and_clauses_are_frozen tests/test_plan_traceability.py::test_structural_replan_creates_new_version_with_parent | 边界:若 MAX_PLAN_REJECTIONS 上限分支无测试覆盖，需在结论中标注为未验证并建议补充测试"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1的targets引用了EV2(PlanError)，但该符号与MAX_PLAN_REJECTIONS无直接关系，属于因名字相似/入口猜测选符号，违反“不得因名字相似选符号”规则；且证据登记表中没有任何MAX_PLAN_REJECTIONS相关证据，子任务1实际无有效target支撑。",
+      "子任务1的acceptance_criteria为字符串拼接格式，未结构化（缺precondition/expected_behavior/test_target/edge_case字段），不符合结构化验收标准要求。",
+      "子任务2、3的acceptance_criteria同样为字符串拼接，未提供结构化字段。",
+      "子任务2的targets中validate_subtasks的evidence_ref写作L242-L302，但证据登记表EV59为L242-302，格式不一致（连字符写法），且EV59 conf=0.6，需确认引用一致性。",
+      "子任务3为verify类型，但depends_on仅指向子任务2，未依赖子任务1（MAX_PLAN_REJECTIONS定位），而验收标准要求标注上限分支生效位置，依赖链不完整。",
+      "顶层缺少coverage字段，未为每个证据文件指定角色，违反“revised必须同时给出coverage”及“顶层coverage必须给每个证据文件指定角色”规则。",
+      "子任务1描述中要求检索MAX_PLAN_REJECTIONS，但证据登记表无对应证据，应显式在missing_evidence中列出，而非以PlanError作为替代target。"
+    ],
+    "revised_coverage": [
+      {
+        "path": "app/engine/planning.py",
+        "role": "核心分析对象：计划校验、重拆与拒绝相关逻辑"
+      },
+      {
+        "path": "app/engine/workflow.py",
+        "role": "核心分析对象：调度与重拆流转"
+      },
+      {
+        "path": "app/storage.py",
+        "role": "核心分析对象：计划保存与版本追加"
+      },
+      {
+        "path": "app/schemas.py",
+        "role": "入口数据结构：审批请求"
+      },
+      {
+        "path": "tests/test_plan_traceability.py",
+        "role": "验证证据：拒绝/重拆/版本冻结行为测试"
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "证据绑定失败：子任务 1（analysis）缺少带证据的关键 target；coverage app/engine/workflow.py 角色「核心分析对象：调度与重拆流转」无效；coverage app/engine/planning.py 角色「核心分析对象：计划校验、重拆与拒绝相关逻辑」无效；coverage 缺少证据文件 app/main.py 的角色；coverage app/storage.py 角色「核心分析对象：计划保存与版本追加」无效；coverage app/schemas.py 角色「入口数据结构：审批请求」无效；coverage 缺少证据文件 app/write_scope.py 的角色"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/schemas.py",
+      "app/storage.py",
+      "app/write_scope.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:PlanError",
+      "app/engine/planning.py:build_grounded_planner_messages",
+      "app/engine/planning.py:next_ready_subtask",
+      "app/engine/planning.py:subtask_delivery",
+      "app/engine/workflow.py:MemoryPlanStore",
+      "app/engine/workflow.py:StoragePlanStore",
+      "app/engine/workflow.py:_generate_specs",
+      "app/engine/workflow.py:execute_subtask_node",
+      "app/engine/workflow.py:pick_next_node",
+      "app/engine/workflow.py:workflow",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/schemas.py:PlanApprovalRequest",
+      "app/schemas.py:SubtaskConfirmRequest",
+      "app/schemas.py:SubtaskEditRequest"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 43
+      },
+      {
+        "tool": "search_symbol",
+        "args": {
+          "query": "MAX_PLAN_REJECTIONS"
+        },
+        "chars": 27
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "MAX_PLAN_REJECTIONS",
+          "limit": 20
+        },
+        "chars": 467
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "max_lines": 80
+        },
+        "chars": 4386
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "plan_rejections",
+          "limit": 25
+        },
+        "chars": 828
+      }
+    ],
+    "extra_round": false
+  },
+  "errors": [
+    "证据绑定失败：子任务 1 target app/config.py:MAX_PLAN_REJECTIONS 缺少 evidence_id；子任务 1 target app/engine/planning.py:PlanError 缺少 evidence_id；子任务 2 target app/schemas.py:PlanApprovalRequest 缺少 evidence_id；子任务 2 target app/engine/workflow.py:pick_next_node 缺少 evidence_id；子任务 2 target app/storage.py:append_plan_version 缺少 evidence_id；子任务 2 target app/storage.py:save_plan 缺少 evidence_id；子任务 2 target app/engine/planning.py:validate_subtasks 缺少 evidence_id；子任务 3 target tests/test_plan_traceability.py:test_rejection_records_new_version_keeping_clauses 缺少 evidence_id；子任务 3 target tests/test_plan_traceability.py:test_goal_and_clauses_are_frozen 缺少 evidence_id；子任务 3 target tests/test_plan_traceability.py:test_structural_replan_creates_new_version_with_parent 缺少 evidence_id",
+    "证据绑定失败：子任务 1 target app/config.py:MAX_PLAN_REJECTIONS 与证据 EV2（app/engine/planning.py:PlanError）不一致；coverage 缺少证据文件 app/main.py 的角色；coverage 缺少证据文件 app/write_scope.py 的角色"
+  ],
+  "usage": {
+    "prompt_tokens": 31747,
+    "completion_tokens": 6604,
+    "total_tokens": 38351
+  },
+  "cost_usd": 0.011663
+}

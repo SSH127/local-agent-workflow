@@ -1,0 +1,542 @@
+{
+  "goal": "最终验收失败时，把失败条款和对应子任务写入失败报告，扩展 build_failure_report 和 clause_report",
+  "task_type": "feature",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析最终验收失败路径与现有报告结构",
+      "description": "阅读 app/engine/workflow.py:final_verify_node（L1373）与 fail_node（L1490），确认最终验收失败时如何调用 build_failure_report、传入的 failure_reason 与 plan 中 clause_report 的可用数据；阅读 app/engine/planning.py:build_failure_report（L1226-1298）与 clause_report（L1301-1351）现有返回字段，确定需要新增的字段（失败条款列表 + 每条条款对应的子任务 id/title/status）以及不破坏既有键的扩展方式。同时确认 app/main.py:_plan_view（L382）如何消费这些字段；_attach_failure_report 未在探索证据中出现，需在分析中定位其真实路径与行号，若不存在则记录为 to-verify。仅分析，不改代码。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已完成对 build_failure_report、clause_report、final_verify_node、fail_node、_plan_view 的阅读 | 期望:产出扩展字段清单：失败条款条目需含 clause_id、clause_text、status、serving_subtask_ids、subtask_titles，并明确 failed_clauses 计入哪些 status（建议 planned/missing/insufficient，不含 covered），说明与现有键的兼容策略 | 测试:人工审阅（analyze 无自动测试） | 边界:无条款（clause_report 为空）与全部条款 covered 但最终验收仍失败的情形需在清单中说明",
+        "前提:探索证据中 _attach_failure_report 未出现 | 期望:分析中给出该符号的真实路径与行号，或标记为 to-verify 并说明替代消费路径 | 测试:人工审阅 | 边界:若该符号不存在，需说明 failure_report 对外暴露的实际路径"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report",
+          "reason": "确认现有报告字段与扩展点",
+          "evidence_ref": "E1 L1226-1298",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report",
+          "reason": "确认条款状态与 serving subtask 信息来源",
+          "evidence_ref": "E3 L1301-1351",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "reason": "确认最终验收失败分支的调用上下文",
+          "evidence_ref": "E4 callers L1373",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "fail_node",
+          "reason": "确认 build_failure_report 的唯一调用点",
+          "evidence_ref": "E2 L1490",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_view",
+          "reason": "确认条款视图消费路径，避免破坏 API 契约",
+          "evidence_ref": "E4 callers L382",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_attach_failure_report",
+          "reason": "确认报告对外暴露路径；探索证据未出现，需分析中定位",
+          "evidence_ref": "未在探索证据中出现",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "扩展 clause_report 输出失败条款与对应子任务",
+      "description": "在 app/engine/planning.py:clause_report 中为每条条款补充 serving subtask 的标识信息（id、title、status），使调用方能直接拿到「条款 → 子任务」映射；保持现有 status 语义（covered/insufficient/planned/missing）与既有键不变，仅新增键。新增键名统一为 serving_subtasks，每项含 id、title、status。理由：build_failure_report 需要该映射来写入失败报告，且 final_verify_node 与 _plan_view 依赖现有结构。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:plan 中某条款由两个子任务声明覆盖，其中一个 done 且有实质证据、另一个 planned | 期望:该条款条目除既有 status 外，新增 serving_subtasks 列出两个子任务的 id/title/status，且 status 仍为 covered | 测试:pytest tests/test_acceptance_gaps.py::test_clause_report_distinguishes_planned_from_verified | 边界:条款无任何子任务声明时 serving_subtasks 为空列表，status 仍为 missing",
+        "前提:子任务 done 但证据不足 | 期望:serving_subtasks 中该子任务 status 反映未验证，条款 status 仍为 insufficient | 测试:pytest tests/test_delivery_integrity.py::test_clause_report_marks_done_without_evidence_as_insufficient | 边界:serving subtask 未被接受时条款为 missing 的既有行为不变"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report",
+          "reason": "新增 serving_subtasks 明细字段供失败报告使用",
+          "evidence_ref": "E3 L1301-1351",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "扩展 build_failure_report 写入失败条款与子任务",
+      "description": "在 app/engine/planning.py:build_failure_report 中新增结构化字段 failed_clauses，内容来自 clause_report 中 status 为 planned/missing/insufficient 的条款及其 serving_subtasks 明细（字段名与子任务 2 一致）；仅在最终验收失败场景填充，其他失败原因下为空列表以保持向后兼容。不修改 evidence_gaps 与 available_evidence 的既有语义。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:plan 中 C1 为 insufficient、C2 为 covered，最终验收失败 | 期望:failure_report 含 failed_clauses 列表，仅包含 C1 及其 serving_subtasks 的 id/title/status；C2 不出现 | 测试:新增或扩展 tests/test_delivery_integrity.py 中断言 failed_clauses 的用例（若不存在则新建测试文件 tests/test_failure_report_clauses.py） | 边界:clause_report 为空时 failed_clauses 为空列表且报告其余字段不变",
+        "前提:非最终验收原因导致的失败（failure_reason 为其他值） | 期望:failed_clauses 为空列表，既有键与取值不变 | 测试:新增或扩展 tests/test_acceptance_gaps.py 中断言 failed_clauses 为空的用例（若不存在则新建测试文件 tests/test_failure_report_clauses.py） | 边界:legacy plan 无 clauses 字段时不抛异常"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report",
+          "reason": "新增 failed_clauses 字段与对应子任务明细",
+          "evidence_ref": "E1 L1226-1298",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "在 final_verify_node 失败分支传入条款上下文",
+      "description": "检查 app/engine/workflow.py:final_verify_node（L1373）在最终验收失败并转入 fail_node 时，是否已把 clause_report 结果或 plan 的 clauses 状态传递给 build_failure_report；若未传递，补充传参或确保 build_failure_report 能从 plan 自行推导，避免重复计算与不一致。仅改动必要的调用处。明确改动点：若 build_failure_report 已能从 plan 推导 failed_clauses，则本子任务仅需确认无需改动并记录；否则在 fail_node 调用处传入 failure_reason 标识最终验收失败。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:最终验收因条款缺失失败并进入 fail_node | 期望:持久化到 plan[\"failure_report\"] 的报告包含 failed_clauses 且与 clause_report 结果一致 | 测试:新增或扩展 tests/test_plan_traceability.py 中断言 failure_report.failed_clauses 的用例（若不存在则新建测试文件 tests/test_failure_report_clauses.py） | 边界:重规划后再次失败时报告反映最新计划版本",
+        "前提:build_failure_report 已能从 plan 推导 failed_clauses | 期望:workflow.py 无需改动，分析中记录该结论 | 测试:人工审阅 | 边界:无"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/workflow.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "reason": "确保最终验收失败时报告能拿到条款上下文",
+          "evidence_ref": "E4 callers L1373",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "fail_node",
+          "reason": "确认 build_failure_report 调用参数",
+          "evidence_ref": "E2 L1490",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "验证报告经 API 暴露且不破坏既有契约",
+      "description": "运行相关测试，确认 _plan_view 在新增字段下仍正常返回，历史 run 无报告时不崩溃；确认 clause_report 既有调用方测试全部通过。_attach_failure_report 若在分析中确认真实存在则一并验证，否则以 _plan_view 与 run detail 载荷为准。",
+      "depends_on": [
+        "2",
+        "3",
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:存在一个最终验收失败的 run | 期望:run detail 返回的 failure_report 含 failed_clauses，且每条含条款与子任务信息 | 测试:新增或扩展 tests/test_failure_report_clauses.py 中断言 API 载荷的用例（若 tests/test_api.py 存在则一并运行） | 边界:legacy run 无 failure_report 时接口返回不变",
+        "前提:运行条款与交付完整性相关测试集 | 期望:全部通过，无既有断言因新增键失败 | 测试:pytest tests/test_delivery_integrity.py tests/test_acceptance_gaps.py tests/test_plan_traceability.py | 边界:clause_report 返回空列表时下游不报错"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_view",
+          "reason": "确认条款视图消费新字段无回归",
+          "evidence_ref": "E4 callers L382",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_attach_failure_report",
+          "reason": "确认新增字段透传且不破坏 run detail 载荷；探索证据未出现，需分析中定位",
+          "evidence_ref": "未在探索证据中出现",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "分析最终验收失败路径与现有报告结构",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py",
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report",
+          "line": 1226,
+          "reason": "确认现有报告字段与扩展点",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report",
+          "line": 1301,
+          "reason": "确认条款状态与 serving subtask 信息来源",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "line": 1373,
+          "reason": "确认最终验收失败分支的调用上下文",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "fail_node",
+          "line": 1490,
+          "reason": "确认 build_failure_report 的唯一调用点",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_view",
+          "line": 382,
+          "reason": "确认条款视图消费路径，避免破坏 API 契约",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_attach_failure_report",
+          "line": 202,
+          "reason": "确认报告对外暴露路径；探索证据未出现，需分析中定位",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report",
+          "lines": "1226-1298",
+          "text": "1226| def build_failure_report(\n1227|     plan: dict[str, Any],\n1228|     run_id: str,\n1229|     *,\n1230|     failure_reason: str | None = None,\n1231| ) -> dict[str, Any]:\n1232|     \"\"\"Build a structured, storage-readable failure report for a failed run.\n1233| \n1234|     The report never fabricates evidence: ``available_evidence`` contains only\n1235|     what was actually observed (real file changes, passing/failing commands,\n1236|     manual notes, and successful tool-call counts), while anything the subtasks\n1237|     failed to deliver is listed under ``evidence_gaps``. ``result_full`` is\n1238|     carried verbatim (not silently truncated) so the full raw result stays"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report",
+          "lines": "1301-1351",
+          "text": "1301| def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:\n1302|     \"\"\"Per goal clause: which subtasks *plan* to cover it vs which have actually\n1303|     been *verified* (done + substantive per-kind evidence).\n1304| \n1305|     ``status`` is one of:\n1306| \n1307|     * ``covered`` — at least one serving subtask is verified;\n1308|     * ``insufficient`` — serving subtasks are done but their evidence does not\n1309|       substantiate the clause (证据不足 / 未验证);\n1310|     * ``planned`` — declared but not yet done;\n1311|     * ``missing`` — no subtask declares it.\n1312|     \"\"\"\n1313|     report = []"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "lines": "1373-1483",
+          "text": "1373| def final_verify_node(state: WorkflowState) -> dict[str, Any]:\n1374|     plan = state[\"plan\"]\n1375|     if P.is_legacy(plan):\n1376|         sub = plan[\"subtasks\"][0]\n1377|         return {\"route\": \"finish\", \"status\": agent_executor.STATUS_SUCCEEDED,\n1378|                 \"summary\": state.get(\"summary\") or sub.get(\"result_summary\", \"\"), \"error\": None}\n1379|     notes: list[str] = []\n1380|     missing, inconsistent = _final_rule_checks(state, notes=notes)\n1381|     clauses = P.clause_report(plan)\n1382|     for c in clauses:\n1383|         if c[\"status\"] == \"missing\":\n1384|             missing.append(f\"目标条款 {c['id']}「{c['text'][:80]}」没有被任何子任务覆盖。\")\n1385|         elif c[\"status\"] == \"planned\":"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已完成对 build_failure_report、clause_report、final_verify_node、fail_node、_plan_view 的阅读 | 期望:产出扩展字段清单：失败条款条目需含 clause_id、clause_text、status、serving_subtask_ids、subtask_titles，并明确 failed_clauses 计入哪些 status（建议 planned/missing/insufficient，不含 covered），说明与现有键的兼容策略 | 测试:人工审阅（analyze 无自动测试） | 边界:无条款（clause_report 为空）与全部条款 covered 但最终验收仍失败的情形需在清单中说明",
+        "前提:探索证据中 _attach_failure_report 未出现 | 期望:分析中给出该符号的真实路径与行号，或标记为 to-verify 并说明替代消费路径 | 测试:人工审阅 | 边界:若该符号不存在，需说明 failure_report 对外暴露的实际路径"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "扩展 clause_report 输出失败条款与对应子任务",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report",
+          "line": 1301,
+          "reason": "新增 serving_subtasks 明细字段供失败报告使用",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report",
+          "lines": "1301-1351",
+          "text": "1301| def clause_report(plan: dict[str, Any]) -> list[dict[str, Any]]:\n1302|     \"\"\"Per goal clause: which subtasks *plan* to cover it vs which have actually\n1303|     been *verified* (done + substantive per-kind evidence).\n1304| \n1305|     ``status`` is one of:\n1306| \n1307|     * ``covered`` — at least one serving subtask is verified;\n1308|     * ``insufficient`` — serving subtasks are done but their evidence does not\n1309|       substantiate the clause (证据不足 / 未验证);\n1310|     * ``planned`` — declared but not yet done;\n1311|     * ``missing`` — no subtask declares it.\n1312|     \"\"\"\n1313|     report = []"
+        }
+      ],
+      "test_command": "pytest tests/test_acceptance_gaps.py::test_clause_report_distinguishes_planned_from_verified",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:plan 中某条款由两个子任务声明覆盖，其中一个 done 且有实质证据、另一个 planned | 期望:该条款条目除既有 status 外，新增 serving_subtasks 列出两个子任务的 id/title/status，且 status 仍为 covered | 测试:pytest tests/test_acceptance_gaps.py::test_clause_report_distinguishes_planned_from_verified | 边界:条款无任何子任务声明时 serving_subtasks 为空列表，status 仍为 missing",
+        "前提:子任务 done 但证据不足 | 期望:serving_subtasks 中该子任务 status 反映未验证，条款 status 仍为 insufficient | 测试:pytest tests/test_delivery_integrity.py::test_clause_report_marks_done_without_evidence_as_insufficient | 边界:serving subtask 未被接受时条款为 missing 的既有行为不变"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "扩展 build_failure_report 写入失败条款与子任务",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report",
+          "line": 1226,
+          "reason": "新增 failed_clauses 字段与对应子任务明细",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report",
+          "lines": "1226-1298",
+          "text": "1226| def build_failure_report(\n1227|     plan: dict[str, Any],\n1228|     run_id: str,\n1229|     *,\n1230|     failure_reason: str | None = None,\n1231| ) -> dict[str, Any]:\n1232|     \"\"\"Build a structured, storage-readable failure report for a failed run.\n1233| \n1234|     The report never fabricates evidence: ``available_evidence`` contains only\n1235|     what was actually observed (real file changes, passing/failing commands,\n1236|     manual notes, and successful tool-call counts), while anything the subtasks\n1237|     failed to deliver is listed under ``evidence_gaps``. ``result_full`` is\n1238|     carried verbatim (not silently truncated) so the full raw result stays"
+        }
+      ],
+      "test_command": "tests/test_delivery_integrity.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:plan 中 C1 为 insufficient、C2 为 covered，最终验收失败 | 期望:failure_report 含 failed_clauses 列表，仅包含 C1 及其 serving_subtasks 的 id/title/status；C2 不出现 | 测试:新增或扩展 tests/test_delivery_integrity.py 中断言 failed_clauses 的用例（若不存在则新建测试文件 tests/test_failure_report_clauses.py） | 边界:clause_report 为空时 failed_clauses 为空列表且报告其余字段不变",
+        "前提:非最终验收原因导致的失败（failure_reason 为其他值） | 期望:failed_clauses 为空列表，既有键与取值不变 | 测试:新增或扩展 tests/test_acceptance_gaps.py 中断言 failed_clauses 为空的用例（若不存在则新建测试文件 tests/test_failure_report_clauses.py） | 边界:legacy plan 无 clauses 字段时不抛异常"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "在 final_verify_node 失败分支传入条款上下文",
+      "kind": "modify",
+      "files": [
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "line": 1373,
+          "reason": "确保最终验收失败时报告能拿到条款上下文",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "fail_node",
+          "line": 1490,
+          "reason": "确认 build_failure_report 调用参数",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "lines": "1373-1483",
+          "text": "1373| def final_verify_node(state: WorkflowState) -> dict[str, Any]:\n1374|     plan = state[\"plan\"]\n1375|     if P.is_legacy(plan):\n1376|         sub = plan[\"subtasks\"][0]\n1377|         return {\"route\": \"finish\", \"status\": agent_executor.STATUS_SUCCEEDED,\n1378|                 \"summary\": state.get(\"summary\") or sub.get(\"result_summary\", \"\"), \"error\": None}\n1379|     notes: list[str] = []\n1380|     missing, inconsistent = _final_rule_checks(state, notes=notes)\n1381|     clauses = P.clause_report(plan)\n1382|     for c in clauses:\n1383|         if c[\"status\"] == \"missing\":\n1384|             missing.append(f\"目标条款 {c['id']}「{c['text'][:80]}」没有被任何子任务覆盖。\")\n1385|         elif c[\"status\"] == \"planned\":"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "fail_node",
+          "lines": "1490-1500",
+          "text": "1490| def fail_node(state: WorkflowState) -> dict[str, Any]:\n1491|     plan = state[\"plan\"]\n1492|     error = state.get(\"error\") or \"Maximum attempts reached\"\n1493|     # Persist a structured failure report so the failure is inspectable from\n1494|     # storage/API (``plan[\"failure_report\"]``), not only from the in-memory\n1495|     # object. Never fabricate missing evidence; gaps are listed explicitly.\n1496|     plan[\"failure_report\"] = P.build_failure_report(\n1497|         plan, state.get(\"run_id\", \"\"), failure_reason=error,\n1498|     )\n1499|     _save(state)\n1500|     return {\"status\": agent_executor.STATUS_FAILED, \"error\": error}"
+        }
+      ],
+      "test_command": "tests/test_plan_traceability.py",
+      "depends_on": [
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:最终验收因条款缺失失败并进入 fail_node | 期望:持久化到 plan[\"failure_report\"] 的报告包含 failed_clauses 且与 clause_report 结果一致 | 测试:新增或扩展 tests/test_plan_traceability.py 中断言 failure_report.failed_clauses 的用例（若不存在则新建测试文件 tests/test_failure_report_clauses.py） | 边界:重规划后再次失败时报告反映最新计划版本",
+        "前提:build_failure_report 已能从 plan 推导 failed_clauses | 期望:workflow.py 无需改动，分析中记录该结论 | 测试:人工审阅 | 边界:无"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "验证报告经 API 暴露且不破坏既有契约",
+      "kind": "verify",
+      "files": [
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_view",
+          "line": 382,
+          "reason": "确认条款视图消费新字段无回归",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_attach_failure_report",
+          "line": 202,
+          "reason": "确认新增字段透传且不破坏 run detail 载荷；探索证据未出现，需分析中定位",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/main.py",
+          "symbol": "_plan_view",
+          "lines": "382-422",
+          "text": "382| def _plan_view(run: dict, plan: dict) -> dict:\n383|     view = dict(plan)\n384|     subtasks = []\n385|     ready = {s[\"id\"] for s in P.ready_subtasks(plan)}\n386|     total_prompt = total_completion = 0\n387|     for s in plan.get(\"subtasks\", []):\n388|         item = {k: v for k, v in s.items() if k != \"last_checkpoint\"}\n389|         tokens = s.get(\"tokens\") or {}\n390|         total_prompt += int(tokens.get(\"prompt\") or 0)\n391|         total_completion += int(tokens.get(\"completion\") or 0)\n392|         item[\"cost\"] = _cost(tokens)\n393|         item[\"retries\"] = max(0, int(s.get(\"attempt_number\") or 0) - 1)\n394|         item[\"ready\"] = s[\"id\"] in ready"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_attach_failure_report",
+          "lines": "202-219",
+          "text": "202| def _attach_failure_report(run: dict) -> dict:\n203|     \"\"\"Attach the persisted ``failure_report`` (if any) to a run detail payload.\n204| \n205|     The structured failure report is written by the final ``fail_node`` into the\n206|     run's plan (``plan[\"failure_report\"]``), not into the ``runs`` row. Merging it\n207|     here keeps the failure deliverable available on the one endpoint the frontend\n208|     already polls for run details, without exposing the full plan or any internal\n209|     object. A run without a report (or a legacy record) is returned unchanged, so\n210|     historical run details never crash.\n211|     \"\"\"\n212|     if isinstance(run.get(\"failure_report\"), dict):\n213|         return run\n214|     plan = storage.get_plan(run[\"run_id\"])"
+        }
+      ],
+      "test_command": "tests/test_failure_report_clauses.py",
+      "depends_on": [
+        "2",
+        "3",
+        "4"
+      ],
+      "acceptance_criteria": [
+        "前提:存在一个最终验收失败的 run | 期望:run detail 返回的 failure_report 含 failed_clauses，且每条含条款与子任务信息 | 测试:新增或扩展 tests/test_failure_report_clauses.py 中断言 API 载荷的用例（若 tests/test_api.py 存在则一并运行） | 边界:legacy run 无 failure_report 时接口返回不变",
+        "前提:运行条款与交付完整性相关测试集 | 期望:全部通过，无既有断言因新增键失败 | 测试:pytest tests/test_delivery_integrity.py tests/test_acceptance_gaps.py tests/test_plan_traceability.py | 边界:clause_report 返回空列表时下游不报错"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务 1 的 targets 引用了 evidence_ref \"E13 L202-219\"（app/main.py:_attach_failure_report），但探索证据中不存在 E13，属于编造证据引用；需改为 to-verify 或移除。",
+      "子任务 1 的 targets 引用 \"E4/E6 callers\" 中的 E6 不存在（E4 是 clause_report 的 callers，E6 未提供），evidence_ref 不实。",
+      "子任务 1 的 targets 引用 app/engine/workflow.py:final_verify_node 的 evidence_ref 为 \"E4/E6 callers\"，但 E4 仅列出 final_verify_node 作为 clause_report 的调用方，未提供该符号定义证据；应标 status=to-verify 或补充真实证据。",
+      "子任务 4 的 targets 中 fail_node 的 evidence_ref \"E2 L1490\" 与 E2 一致，但 final_verify_node 的 evidence_ref \"E4/E6 callers L1373\" 含不存在的 E6，需修正。",
+      "子任务 5 的 targets 引用 app/main.py:_attach_failure_report 的 evidence_ref \"E13 L202-219\" 不存在，且 _attach_failure_report 未在探索证据中出现，应标 status=to-verify。",
+      "子任务 5 的 targets 引用 app/main.py:_plan_view 的 evidence_ref \"E4 callers L382\"，E4 确实列出 _plan_view@L382，但该符号仅为 clause_report 调用方，作为 verify 目标可接受，但需确认其真实存在（E4 已确认）。",
+      "子任务 2 的验收标准测试 test_clause_report_distinguishes_planned_from_verified 与子任务 3 的测试 test_modify_with_failed_verification_is_not_covered 均未直接覆盖新增字段 failed_clauses 的断言，测试目标与期望行为不匹配，需补充针对新字段的测试或明确测试目标。",
+      "子任务 3 的验收标准中测试 test_clause_report_distinguishes_planned_from_verified 用于验证非最终验收失败场景的向后兼容，但该测试不涉及 build_failure_report，测试目标不匹配。",
+      "子任务 4 的验收标准测试 test_clause_report_marks_missing_when_serving_subtask_not_accepted 仅测试 clause_report，不验证 fail_node 持久化 failed_clauses，测试目标不匹配。",
+      "子任务 5 的验收标准引用 pytest tests/test_api.py，但探索证据未确认该测试文件存在，需标 to-verify 或改为已确认的测试文件。"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/storage.py",
+      "app/write_guard.py",
+      "frontend/src/failureReportModel.ts"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:build_failure_report",
+      "app/engine/planning.py:classify_final_verify_failure",
+      "app/engine/planning.py:clause_report",
+      "app/engine/workflow.py:RunContext",
+      "app/engine/workflow.py:execute_subtask_node",
+      "app/engine/workflow.py:fail_node",
+      "app/engine/workflow.py:final_verify_node",
+      "app/engine/workflow.py:verify_subtask_node",
+      "app/main.py:_attach_failure_report",
+      "app/main.py:create_run",
+      "app/main.py:run_events",
+      "app/storage.py:append_run_event",
+      "app/storage.py:transition_run_status",
+      "app/storage.py:update_run_state",
+      "app/write_guard.py:WriteConflict",
+      "app/write_guard.py:WriteGuardError"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 38
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/workflow.py",
+          "symbol": "fail_node",
+          "max_lines": 60
+        },
+        "chars": 738
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/workflow.py",
+          "symbol": "final_verify_node",
+          "max_lines": 80
+        },
+        "chars": 4654
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "max_lines": 75,
+          "path": "app/engine/planning.py",
+          "symbol": "build_failure_report"
+        },
+        "chars": 3590
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "max_lines": 55,
+          "path": "app/engine/planning.py",
+          "symbol": "clause_report"
+        },
+        "chars": 2525
+      }
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 14883,
+    "completion_tokens": 5698,
+    "total_tokens": 20581
+  },
+  "cost_usd": 0.00656
+}

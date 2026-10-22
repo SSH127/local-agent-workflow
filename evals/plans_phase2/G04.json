@@ -1,0 +1,373 @@
+{
+  "goal": "分析计划被用户拒绝后重新拆解的完整流程，说明 MAX_PLAN_REJECTIONS 在哪里生效",
+  "task_type": "analysis",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 的定义与全部引用点",
+      "description": "在代码库中检索 MAX_PLAN_REJECTIONS 常量（预期在 app/config.py 或 app/engine/planning.py 中定义）以及所有读取它的位置，确认默认值、可配置方式（环境变量/配置项）和生效边界。同时定位计划审批被拒绝的入口：app/main.py 的 approve_run（L239-297）与 PlanApprovalRequest（app/schemas.py L87-104），以及 workflow 中处理 plan 审批结果的节点（如 _generate_specs L575-595 附近的 replan 分支、_record_version L549-555）。只读分析，不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读 app/config.py、app/engine/planning.py、app/engine/workflow.py、app/main.py | 期望:输出 MAX_PLAN_REJECTIONS 的精确文件+行号定义、默认值、读取它的每一处调用点（文件+符号+行号），并标注哪些是 confirmed、哪些是 to-verify | 测试:人工核对：grep -n \"MAX_PLAN_REJECTIONS\" app/ 结果与报告逐条一致 | 边界:若常量不存在于代码库，需明确报告“未找到”而非编造"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/config.py",
+          "symbol": "MAX_PLAN_REJECTIONS",
+          "reason": "常量定义位置待确认（也可能在 planning.py），需给出真实定义行",
+          "evidence_ref": "grounding 未直接列出，to-verify",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "approve_run",
+          "reason": "计划审批被拒绝的 API 入口，决定 rejected 后如何触发重新拆解",
+          "evidence_ref": "L239-L297",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/schemas.py",
+          "symbol": "PlanApprovalRequest",
+          "reason": "审批请求体，含 approve/reject 与反馈字段，是拒绝信号的来源",
+          "evidence_ref": "L87-L104",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_generate_specs",
+          "reason": "重新拆解时重新生成子任务规格的调用点，需确认 rejection 计数如何传入",
+          "evidence_ref": "L575-L595",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_record_version",
+          "reason": "每次重拆是否记录新计划版本及原因（rejection）",
+          "evidence_ref": "L549-L555",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "梳理拒绝→重拆的完整状态流转与计数生效点",
+      "description": "基于子任务1的定位，按时间顺序还原流程：(a) 用户通过 approve_run 提交 reject + feedback；(b) 计划状态被置为 rejected 并持久化（storage.save_plan / update_run_state）；(c) 控制循环回到规划节点，读取 rejection 计数；(d) 若计数 < MAX_PLAN_REJECTIONS 则携带 feedback 重新调用 _generate_specs 生成新计划并 _record_version（reason=rejection）；(e) 若计数 >= MAX_PLAN_REJECTIONS 则终止/转人工，说明具体分支与返回状态。同时说明计数在何处递增、是否持久化（run state 还是 plan 字段）、是否跨进程/重启保留。只读分析。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已完成子任务1并拿到 MAX_PLAN_REJECTIONS 的读取点 | 期望:输出带文件+符号+行号的顺序流程图（文字版），明确标出“计数递增行”“与 MAX_PLAN_REJECTIONS 比较的行”“超限后的终止分支”，并说明计数存储介质与生命周期 | 测试:人工核对：对照 tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses 与 tests/test_approval_flow.py 中的拒绝用例，确认流程描述与测试断言一致 | 边界:需覆盖：连续多次拒绝、拒绝后用户取消、拒绝计数在进程重启后的行为"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "run_workflow",
+          "reason": "控制循环主入口，需确认规划节点与审批等待节点的路由条件",
+          "evidence_ref": "L1583 附近（grounding 影响面提及）",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_intervention",
+          "reason": "审批/干预等待点，reject 结果在此被消费",
+          "evidence_ref": "L558-L562",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "save_plan",
+          "reason": "计划（含 rejection 计数/状态）持久化位置，决定计数是否跨重启保留",
+          "evidence_ref": "L336-L349",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_record_version",
+          "reason": "版本记录入口，确认 rejection 重拆是否产生新版本及 reason 字段",
+          "evidence_ref": "L446 附近（grounding 影响面提及）",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "用现有测试与代码证据交叉验证结论并成文",
+      "description": "用仓库中已有的测试作为行为证据，验证子任务2的流程描述：tests/test_plan_traceability.py 中 test_rejection_records_new_version_keeping_clauses（L242）、test_structural_replan_creates_new_version_with_parent（L223）、test_replans_keep_the_same_clauses_and_record_versions（L195），以及 tests/test_approval_flow.py / tests/test_approvals.py 中的拒绝相关用例。运行这些测试确认通过，并把“MAX_PLAN_REJECTIONS 在哪里生效”的最终结论（定义位置、比较位置、超限行为、证据引用）整理为一段可直接交付的说明。只读分析，不修改代码。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:子任务2的流程描述已完成 | 期望:运行 pytest tests/test_plan_traceability.py -q 全部通过；最终说明中每条流程断言都挂有 文件:行号 或 测试用例名 证据，且 MAX_PLAN_REJECTIONS 的生效点被明确指到具体行 | 测试:pytest tests/test_plan_traceability.py -q | 边界:若某测试失败或不存在，需在结论中标注 to-verify 并说明缺口，不得据推测下结论"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_rejection_records_new_version_keeping_clauses",
+          "reason": "直接覆盖“拒绝后重拆并记录新版本”的行为，是流程结论的关键证据",
+          "evidence_ref": "L242",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_structural_replan_creates_new_version_with_parent",
+          "reason": "验证重拆产生带 parent 的新版本，佐证版本链",
+          "evidence_ref": "L223",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+          "reason": "验证重拆时目标条款冻结不变",
+          "evidence_ref": "L195",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 的定义与全部引用点",
+      "kind": "analyze",
+      "files": [
+        "app/config.py",
+        "app/main.py",
+        "app/schemas.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/config.py",
+          "symbol": "MAX_PLAN_REJECTIONS",
+          "line": null,
+          "reason": "常量定义位置待确认（也可能在 planning.py），需给出真实定义行",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "approve_run",
+          "line": 239,
+          "reason": "计划审批被拒绝的 API 入口，决定 rejected 后如何触发重新拆解",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/schemas.py",
+          "symbol": "PlanApprovalRequest",
+          "line": 87,
+          "reason": "审批请求体，含 approve/reject 与反馈字段，是拒绝信号的来源",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_generate_specs",
+          "line": 575,
+          "reason": "重新拆解时重新生成子任务规格的调用点，需确认 rejection 计数如何传入",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_record_version",
+          "line": 549,
+          "reason": "每次重拆是否记录新计划版本及原因（rejection）",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/main.py",
+          "symbol": "approve_run",
+          "lines": "239-297",
+          "text": "239| def approve_run(run_id: str, payload: ApprovalRequest):\n240|     run = get_run(run_id)\n241|     if run is None:\n242|         raise HTTPException(status_code=404, detail=\"Run not found\")\n243|     if run[\"status\"] != agent_executor.STATUS_WAITING_APPROVAL:\n244|         raise HTTPException(\n245|             status_code=409,\n246|             detail=f\"任务当前状态为 {run['status']}，无需批准。\",\n247|         )\n248| \n249|     state = dict(run.get(\"state\") or {})\n250|     pending = state.get(\"pending_approval\")\n251|     pending_id = pending.get(\"approval_id\") if isinstance(pending, dict) else None"
+        },
+        {
+          "path": "app/schemas.py",
+          "symbol": "PlanApprovalRequest",
+          "lines": "87-104",
+          "text": "87| class PlanApprovalRequest(BaseModel):\n88|     \"\"\"Approve or reject the pending plan version.\n89| \n90|     ``decision=\"reject\"`` sends the run back to decompose with ``feedback``\n91|     (bounded by ``MAX_PLAN_REJECTIONS``). ``subtasks`` (approve only) replaces\n92|     the not-yet-done part of the graph with a user-edited version.\n93|     ``approved`` is accepted as a legacy alias of ``decision``.\n94|     \"\"\"\n95| \n96|     decision: Literal[\"approve\", \"reject\"] | None = None\n97|     approved: bool | None = None\n98|     feedback: str | None = Field(default=None, max_length=4000)\n99|     subtasks: list[dict[str, Any]] | None = None"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_generate_specs",
+          "lines": "575-595",
+          "text": "575| def _generate_specs(\n576|     state: WorkflowState, feedback: list[str], clauses: list[dict[str, str]],\n577| ) -> tuple[list[dict[str, Any]], str, list[str]]:\n578|     goal = state[\"goal\"]\n579|     ids = [c[\"id\"] for c in clauses]\n580|     if not config.PLANNER_ENABLED:\n581|         return P.single_subtask_spec(goal, ids), \"single\", []\n582|     use_p2 = bool(getattr(config, \"PLANNER_STRICT\", False))\n583|     messages, _pack = P.build_grounded_planner_messages(\n584|         goal, state.get(\"workspace\"), config.MAX_SUBTASKS, clauses, phase2=use_p2)\n585|     if feedback:\n586|         messages[-1][\"content\"] += (\n587|             \"\\n\\n用户拒绝了上一版计划，反馈如下，请据此重新拆解：\\n\""
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读 app/config.py、app/engine/planning.py、app/engine/workflow.py、app/main.py | 期望:输出 MAX_PLAN_REJECTIONS 的精确文件+行号定义、默认值、读取它的每一处调用点（文件+符号+行号），并标注哪些是 confirmed、哪些是 to-verify | 测试:人工核对：grep -n \"MAX_PLAN_REJECTIONS\" app/ 结果与报告逐条一致 | 边界:若常量不存在于代码库，需明确报告“未找到”而非编造"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "梳理拒绝→重拆的完整状态流转与计数生效点",
+      "kind": "analyze",
+      "files": [
+        "app/engine/workflow.py",
+        "app/storage.py",
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "run_workflow",
+          "line": 1583,
+          "reason": "控制循环主入口，需确认规划节点与审批等待节点的路由条件",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_intervention",
+          "line": 558,
+          "reason": "审批/干预等待点，reject 结果在此被消费",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "save_plan",
+          "line": 336,
+          "reason": "计划（含 rejection 计数/状态）持久化位置，决定计数是否跨重启保留",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_record_version",
+          "line": 446,
+          "reason": "版本记录入口，确认 rejection 重拆是否产生新版本及 reason 字段",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "run_workflow",
+          "lines": "1583-1635",
+          "text": "1583| def run_workflow(\n1584|     goal: str,\n1585|     max_attempts: int = 2,\n1586|     *,\n1587|     run_id: str | None = None,\n1588|     llm: Any = None,\n1589|     recorder: Any = None,\n1590|     workspace: str | None = None,\n1591|     resume: ResumeState | None = None,\n1592| ) -> dict[str, Any]:\n1593|     # ``max_attempts`` is kept for API compatibility only: retries are owned by\n1594|     # the control loop (transient retry / rewrite / structural replan) and the\n1595|     # inner ReAct loop, never by re-running the whole graph."
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_intervention",
+          "lines": "558-562",
+          "text": "558| def _intervention(ctx: RunContext):\n559|     def record(subtask: dict[str, Any], item: dict[str, Any]) -> None:\n560|         with ctx.lock:\n561|             subtask.setdefault(\"interventions\", []).append({**item, \"at\": utc_now()})\n562|     return record"
+        },
+        {
+          "path": "app/storage.py",
+          "symbol": "save_plan",
+          "lines": "336-359",
+          "text": "336| def save_plan(run_id: str, plan: dict[str, Any], db_path: Path | None = None) -> None:\n337|     goal = _goal_payload(plan)\n338|     with _connect(db_path) as conn:\n339|         # BEGIN IMMEDIATE makes the freeze check and the write ONE transaction\n340|         # across processes. Without it the read is not part of the write\n341|         # transaction, so two runners can both see \"no goal yet\" and the second\n342|         # commit silently replaces the first runner's frozen goal. (Within a\n343|         # process ``_DB_LOCK`` already serializes, but that lock is process-local.)\n344|         conn.execute(\"BEGIN IMMEDIATE\")\n345|         row = conn.execute(\n346|             \"SELECT goal_json FROM run_plans WHERE run_id = ?\", (run_id,)\n347|         ).fetchone()\n348|         frozen = row[0] if row is not None else None"
+        }
+      ],
+      "test_command": "tests/test_plan_traceability.py",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:已完成子任务1并拿到 MAX_PLAN_REJECTIONS 的读取点 | 期望:输出带文件+符号+行号的顺序流程图（文字版），明确标出“计数递增行”“与 MAX_PLAN_REJECTIONS 比较的行”“超限后的终止分支”，并说明计数存储介质与生命周期 | 测试:人工核对：对照 tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses 与 tests/test_approval_flow.py 中的拒绝用例，确认流程描述与测试断言一致 | 边界:需覆盖：连续多次拒绝、拒绝后用户取消、拒绝计数在进程重启后的行为"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "用现有测试与代码证据交叉验证结论并成文",
+      "kind": "analyze",
+      "files": [
+        "tests/test_plan_traceability.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_rejection_records_new_version_keeping_clauses",
+          "line": 242,
+          "reason": "直接覆盖“拒绝后重拆并记录新版本”的行为，是流程结论的关键证据",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_structural_replan_creates_new_version_with_parent",
+          "line": 223,
+          "reason": "验证重拆产生带 parent 的新版本，佐证版本链",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+          "line": 195,
+          "reason": "验证重拆时目标条款冻结不变",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_rejection_records_new_version_keeping_clauses",
+          "lines": "242-258",
+          "text": "242| def test_rejection_records_new_version_keeping_clauses(planner_on, monkeypatch):\n243|     monkeypatch.setattr(config, \"PLAN_REQUIRES_APPROVAL\", True)\n244|     llm = PlannerLLM([plan_json(sub(\"1\")), plan_json(sub(\"1\"), sub(\"2\", deps=[\"1\"]))])\n245|     make_run_row(\"run-rv\")\n246|     store = W.StoragePlanStore(\"run-rv\")\n247|     run(\"分析项目结构\", llm, Recorder(store), FakeExecutor({}), monkeypatch, planner_on,\n248|         run_id=\"run-rv\")\n249|     plan = store.load()\n250|     plan[\"approval_status\"] = P.PLAN_REJECTED\n251|     plan[\"plan_rejections\"] = 1\n252|     plan[\"feedback\"] = [\"拆细一点\"]\n253|     store.save(plan)\n254|     run(\"分析项目结构\", llm, Recorder(store), FakeExecutor({}), monkeypatch, planner_on,"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_structural_replan_creates_new_version_with_parent",
+          "lines": "223-239",
+          "text": "223| def test_structural_replan_creates_new_version_with_parent(planner_on, monkeypatch):\n224|     monkeypatch.setattr(config, \"PLAN_REQUIRES_APPROVAL\", True)\n225|     first = plan_json(sub(\"1\"), sub(\"2\", deps=[\"1\"]))\n226|     structural = plan_json(sub(\"2\", deps=[\"1\"]), sub(\"2b\", title=\"先安装依赖\", deps=[\"1\"]))\n227|     llm = PlannerLLM([first, structural])\n228|     make_run_row(\"run-sv\")\n229|     store = W.StoragePlanStore(\"run-sv\")\n230|     rec = Recorder(store)\n231|     ex = FakeExecutor({\"2\": [failed()]})\n232|     run(\"分析项目结构\", llm, rec, ex, monkeypatch, planner_on, run_id=\"run-sv\")\n233|     _approve(store)\n234|     run(\"分析项目结构\", llm, rec, ex, monkeypatch, planner_on, run_id=\"run-sv\")\n235|     versions = storage.list_plan_versions(\"run-sv\")"
+        },
+        {
+          "path": "tests/test_plan_traceability.py",
+          "symbol": "test_replans_keep_the_same_clauses_and_record_versions",
+          "lines": "195-220",
+          "text": "195| def test_replans_keep_the_same_clauses_and_record_versions(planner_on, monkeypatch):\n196|     first = plan_json(sub(\"1\", serves=(\"C1\",)), sub(\"2\", deps=[\"1\"], serves=(\"C2\",)))\n197|     rewrite = plan_json(sub(\"2\", title=\"换个做法\", deps=[\"1\"], serves=(\"C2\",)))\n198|     llm = PlannerLLM([first, rewrite])\n199|     make_run_row(\"run-ver\")\n200|     store = W.StoragePlanStore(\"run-ver\")\n201|     res = run(TWO_CLAUSES, llm, Recorder(store), FakeExecutor({\"2\": [failed(), ok()]}),\n202|               monkeypatch, planner_on, run_id=\"run-ver\")\n203|     assert res[\"status\"] == \"succeeded\", (res[\"error\"], llm.calls[-1][-1][\"content\"][-600:])\n204|     plan = store.load()\n205|     assert plan[\"goal_clauses\"] == P.split_goal_clauses(TWO_CLAUSES)\n206|     assert (plan[\"version\"], plan[\"revision\"]) == (1, 2)\n207|     # The replanner was told the frozen clauses."
+        }
+      ],
+      "test_command": "pytest tests/test_plan_traceability.py -q 全部通过；最终说明中每条流程断言都挂有 文件:行号 或 测试用例名 证据，且 MAX_PLAN_REJECTIONS 的生效点被明确指到具体行",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:子任务2的流程描述已完成 | 期望:运行 pytest tests/test_plan_traceability.py -q 全部通过；最终说明中每条流程断言都挂有 文件:行号 或 测试用例名 证据，且 MAX_PLAN_REJECTIONS 的生效点被明确指到具体行 | 测试:pytest tests/test_plan_traceability.py -q | 边界:若某测试失败或不存在，需在结论中标注 to-verify 并说明缺口，不得据推测下结论"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1的targets中app/config.py:MAX_PLAN_REJECTIONS为to-verify，但grounding未列出该文件/符号，且描述中已承认可能不存在；analysis任务允许to-verify，但需在描述中明确该文件为待确认而非已存在，避免误导。",
+      "子任务1的targets中app/engine/workflow.py:_generate_specs与_record_version的evidence_ref为L575-595/L549-555，但grounding影响面仅提及app/main.py:_record_version@L446，workflow.py中这两个符号的行号未经grounding确认，status=confirmed缺乏证据支撑，应改为to-verify。",
+      "子任务2的targets中app/engine/workflow.py:run_workflow的evidence_ref写“L1583 附近（grounding 影响面提及）”，但grounding中run_workflow@L1583是MemoryPlanStore的调用方，并非run_workflow定义行；evidence_ref不准确，status=to-verify可接受但需修正引用描述。",
+      "子任务2的targets中app/engine/workflow.py:_intervention与app/storage.py:save_plan标注confirmed，但grounding未列出这两个符号，行号L558-562/L336-349无证据来源，应改为to-verify。",
+      "子任务2的targets中app/main.py:_record_version标注to-verify但evidence_ref写“L446 附近（grounding 影响面提及）”，grounding确实列出app/main.py:_record_version@L446，可确认为confirmed，状态与证据不一致。",
+      "子任务3的acceptance_criteria中测试命令pytest tests/test_plan_traceability.py -q，但描述还提到tests/test_approval_flow.py / tests/test_approvals.py，这些文件未在grounding中出现，需在描述中标注为to-verify或移除，避免引用不存在的测试文件。",
+      "子任务3的targets三个测试符号均标注confirmed且evidence_ref为L242/L223/L195，grounding影响面确实列出这些测试，可接受；但test_structural_replan_creates_new_version_with_parent与test_replans_keep_the_same_clauses_and_record_versions的L223/L195在grounding中作为list_plan_versions/get_plan_version的调用方出现，行号可信，保留。",
+      "整体：analysis任务步骤数3符合上限；但子任务1描述中引用app/main.py approve_run L239-297、app/schemas.py PlanApprovalRequest L87-104等行号未在grounding中确认，需在描述中标注to-verify或改为符号级引用。",
+      "验收标准已结构化含precondition/expected_behavior/test_target/edge_case，基本合规；但子任务1的test_target为“人工核对grep”，非可执行测试，建议补充可执行命令如grep -rn MAX_PLAN_REJECTIONS app/作为test_target。",
+      "子任务2的edge_case覆盖连续拒绝、取消、重启，较好；但未覆盖“拒绝计数与MAX_PLAN_REJECTIONS相等时的边界”，建议补充。"
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 9039,
+    "completion_tokens": 4185,
+    "total_tokens": 13224
+  },
+  "cost_usd": 0.004289
+}

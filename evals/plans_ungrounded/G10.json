@@ -1,0 +1,94 @@
+{
+  "goal": "并行执行时 launchable_subtasks 可能同时启动 write_scope 重叠的子任务，修复并加并发测试",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位并行调度与 write_scope 重叠缺陷",
+      "description": "只读分析 app/engine/ 下的并行调度逻辑（MAX_PARALLEL、launchable_subtasks、租约/心跳、写入范围互斥判定）与 app/planner/ 中的 write_scope 契约定义，找出为何 launchable_subtasks 会同时返回 write_scope 重叠的子任务（例如仅按依赖路径判重、glob 未规范化、大小写/路径分隔符差异、空 scope 处理等）。输出缺陷根因与需修改的函数清单。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确指出产生重叠启动的具体代码位置（文件+函数）",
+        "列出至少一条可复现的重叠场景（子任务 A/B 的 write_scope 示例）",
+        "给出修复方案要点，供后续 modify 子任务直接实施"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 launchable_subtasks 的写入范围互斥",
+      "description": "在 app/engine/（及必要的 app/planner/ 辅助函数）中修复并行调度：launchable_subtasks 在挑选可并行子任务时，除依赖满足外还必须保证与已启动/运行中子任务的 write_scope 互斥（规范化路径、展开 glob、处理目录前缀与空 scope），重叠者不得同时启动。保持既有 API 与返回结构兼容。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "launchable_subtasks 对 write_scope 重叠的子任务只返回其中一个",
+        "不改变无重叠场景下的并行度与依赖顺序语义",
+        "现有 tests/ 中调度相关测试不回归"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/**",
+        "app/planner/**"
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "新增并发重叠调度测试",
+      "description": "在 tests/ 下新增测试文件（如 tests/test_parallel_write_scope.py），构造 write_scope 重叠与不重叠两组子任务 DAG，断言重叠组不会被同时启动、不重叠组仍可并行；覆盖 glob、目录前缀、路径分隔符差异等边界。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试至少包含重叠被阻止与不重叠可并行两个用例",
+        "测试在修复后通过、在修复前可复现失败（可临时回退验证）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_parallel_write_scope.py"
+      ],
+      "serves_clauses": [
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查",
+      "description": "运行 pytest 目标测试（新增并发测试 + 调度/引擎相关既有测试）与 ruff 检查，确认修复无回归。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest tests/test_parallel_write_scope.py 全部通过",
+        "调度/引擎相关既有测试全部通过",
+        "ruff check 无新增告警"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

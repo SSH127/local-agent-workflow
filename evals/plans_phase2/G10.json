@@ -1,0 +1,384 @@
+{
+  "goal": "并行执行时 launchable_subtasks 可能同时启动 write_scope 重叠的子任务，修复并加并发测试",
+  "task_type": "bugfix",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 launchable_subtasks 并发重叠缺陷",
+      "description": "阅读 app/engine/planning.py 的 launchable_subtasks（L796 起）与 app/write_scope.py 的 scopes_overlap（L162-164），确认候选筛选逻辑：是否只与 in_flight 及本批次已选节点比较 write_scope，是否存在未比较 running 但不在 in_flight 的节点、或未把已选批次累积进冲突集合导致同批启动重叠子任务。同时核对调用方 app/engine/workflow.py:pick_next_node（L710）与 _start_subtask（L809）如何使用返回值，确认修复点应落在 planning 层而非 workflow 层。产出：缺陷根因说明 + 拟修改符号清单（明确是否需改 app/write_scope.py）。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已阅读 launchable_subtasks 与 scopes_overlap 源码 | 期望:给出可复现的重叠启动路径（哪些候选被同时返回）与根因结论，并明确修复点文件 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:running 但不在 in_flight 的崩溃恢复节点、write_scope 为空的只读节点"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "reason": "疑似并发重叠的判定逻辑所在",
+          "evidence_ref": "L796-L840",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap",
+          "reason": "重叠判定原语，需确认语义是否保守",
+          "evidence_ref": "L162-L164",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "reason": "唯一调用方，确认调度契约",
+          "evidence_ref": "L710",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 launchable_subtasks 的批次内重叠互斥",
+      "description": "在 app/engine/planning.py 的 launchable_subtasks 中，确保候选选择时把本批次已选节点的 write_scope 累积进冲突集合，与 in_flight 节点一并参与 scopes_overlap 判定；对 write_scope 为空的只读节点保持可并行（不误伤现有行为）。仅当子任务1确认根因在 scopes_overlap 保守性不足时，才同步修改 app/write_scope.py:scopes_overlap，并保持 normalize_scope 语义不变。修改需保持函数签名与返回结构（list[dict]）不变，避免影响 workflow.pick_next_node。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:plan 含两个 write_scope 重叠的 ready pending 子任务，capacity>=2，in_flight 为空 | 期望:launchable_subtasks 只返回其中一个，另一个留待前一个完成后启动 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:write_scope 为空的只读节点仍可与任意节点同批返回",
+        "前提:in_flight 中已有 write_scope 与候选重叠的节点 | 期望:该候选不被返回 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:running 但不在 in_flight 的崩溃恢复节点同样参与互斥"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "reason": "批次内已选节点未参与重叠判定导致同批启动重叠子任务",
+          "evidence_ref": "L796-L840",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "新增并发重叠调度回归测试",
+      "description": "在 tests/test_parallel.py 中追加新测试函数（不新建文件）：构造多个 write_scope 两两重叠与部分重叠的 ready 子任务，capacity 大于 1，直接调用 launchable_subtasks 断言返回集合内任意两节点 scopes_overlap 为 False；再通过 _run 走完整并行执行，断言重叠子任务的执行区间不重叠（用 Tracker 记录起止）。覆盖只读节点（空 scope）可与写节点并行的正例。新增测试函数名 test_overlapping_scopes_are_serialized。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:plan 含 3 个 write_scope 部分重叠的 ready 子任务，capacity=3 | 期望:launchable_subtasks 返回结果中任意两节点 scopes_overlap 为 False，且总数小于 3 | 测试:pytest tests/test_parallel.py -k overlap | 边界:空 write_scope 只读节点不被互斥排除",
+        "前提:通过 _run 执行上述 plan | 期望:重叠子任务的执行时间区间不重叠，非重叠子任务仍并行 | 测试:pytest tests/test_parallel.py::test_overlapping_scopes_are_serialized | 边界:capacity=1 时退化为严格串行仍通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_parallel.py"
+      ],
+      "targets": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "reason": "在同类测试旁新增并发重叠回归用例",
+          "evidence_ref": "L138-L148",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "Tracker",
+          "reason": "复用其记录并行执行区间",
+          "evidence_ref": "L37-L73",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "回归验证既有并行、写入范围与调用方行为",
+      "description": "运行并行调度与写入范围相关测试集，确认修复未破坏 in_flight 语义、计数器精确性、步数预算预留与 write_scope 工具层强制；并验证 app/engine/workflow.py:pick_next_node 与 _start_subtask 在修复后仍按契约消费 launchable_subtasks 返回值。若出现失败，回到子任务 2 调整实现而非放宽测试。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:修复已合入工作区 | 期望:并行与写入范围测试全部通过，无新增失败 | 测试:pytest tests/test_parallel.py tests/test_write_scope.py | 边界:test_counters_are_exact_under_concurrency 与 test_overlap_is_conservative 仍通过",
+        "前提:修复已合入工作区 | 期望:workflow.pick_next_node 与 _start_subtask 消费 launchable_subtasks 返回值行为不变，无重复启动重叠子任务 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:in_flight 为空与含崩溃恢复 running 节点两种场景"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_counters_are_exact_under_concurrency",
+          "reason": "并发计数回归",
+          "evidence_ref": "L186-L196",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_overlap_is_conservative",
+          "reason": "重叠判定语义回归",
+          "evidence_ref": "L47-L53",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "reason": "调用方行为回归",
+          "evidence_ref": "L710",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 launchable_subtasks 并发重叠缺陷",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/write_scope.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "line": 796,
+          "reason": "疑似并发重叠的判定逻辑所在",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap",
+          "line": 162,
+          "reason": "重叠判定原语，需确认语义是否保守",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "line": 710,
+          "reason": "唯一调用方，确认调度契约",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "lines": "796-840",
+          "text": "796| def launchable_subtasks(\n797|     plan: dict[str, Any],\n798|     in_flight: set[str],\n799|     capacity: int,\n800|     *,\n801|     exclude: set[str] | None = None,\n802| ) -> list[dict[str, Any]]:\n803|     \"\"\"Subtasks the parallel scheduler may start now.\n804| \n805|     Candidates are ``running`` subtasks not in flight in this process (crash\n806|     recovery / restart) followed by ready ``pending`` ones, in topological\n807|     order. A candidate is taken only if its write_scope overlaps neither a\n808|     subtask in flight nor one already chosen in this batch; overlapping ones"
+        },
+        {
+          "path": "app/write_scope.py",
+          "symbol": "scopes_overlap",
+          "lines": "162-164",
+          "text": "162| def scopes_overlap(a: list[str] | None, b: list[str] | None) -> bool:\n163|     \"\"\"Could any path be written by both scopes? Empty scope never overlaps.\"\"\"\n164|     return any(patterns_overlap(x, y) for x in (a or []) for y in (b or []))"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "lines": "710-786",
+          "text": "710| def pick_next_node(state: WorkflowState) -> dict[str, Any]:\n711|     \"\"\"Scheduler: decide what to launch, whether to wait, pause or exit.\n712| \n713|     Pauses / exits are only taken when nothing is in flight (drain first).\"\"\"\n714|     plan = state[\"plan\"]\n715|     ctx = state[\"ctx\"]\n716|     in_flight = ctx.in_flight()\n717|     fresh = state[\"store\"].load()\n718|     if isinstance(fresh, dict) and fresh.get(\"cancel_requested\"):\n719|         plan[\"cancel_requested\"] = True\n720|     if plan.get(\"cancel_requested\"):\n721|         ctx.cancel.set(\"用户取消\")\n722|         return {\"route\": \"wait\", \"launch\": []} if in_flight else {\"route\": \"cancel\"}"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes",
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已阅读 launchable_subtasks 与 scopes_overlap 源码 | 期望:给出可复现的重叠启动路径（哪些候选被同时返回）与根因结论，并明确修复点文件 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:running 但不在 in_flight 的崩溃恢复节点、write_scope 为空的只读节点"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "修复 launchable_subtasks 的批次内重叠互斥",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "line": 796,
+          "reason": "批次内已选节点未参与重叠判定导致同批启动重叠子任务",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "launchable_subtasks",
+          "lines": "796-840",
+          "text": "796| def launchable_subtasks(\n797|     plan: dict[str, Any],\n798|     in_flight: set[str],\n799|     capacity: int,\n800|     *,\n801|     exclude: set[str] | None = None,\n802| ) -> list[dict[str, Any]]:\n803|     \"\"\"Subtasks the parallel scheduler may start now.\n804| \n805|     Candidates are ``running`` subtasks not in flight in this process (crash\n806|     recovery / restart) followed by ready ``pending`` ones, in topological\n807|     order. A candidate is taken only if its write_scope overlaps neither a\n808|     subtask in flight nor one already chosen in this batch; overlapping ones"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:plan 含两个 write_scope 重叠的 ready pending 子任务，capacity>=2，in_flight 为空 | 期望:launchable_subtasks 只返回其中一个，另一个留待前一个完成后启动 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:write_scope 为空的只读节点仍可与任意节点同批返回",
+        "前提:in_flight 中已有 write_scope 与候选重叠的节点 | 期望:该候选不被返回 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:running 但不在 in_flight 的崩溃恢复节点同样参与互斥"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "新增并发重叠调度回归测试",
+      "kind": "verify",
+      "files": [
+        "tests/test_parallel.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "line": 138,
+          "reason": "在同类测试旁新增并发重叠回归用例",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "Tracker",
+          "line": 37,
+          "reason": "复用其记录并行执行区间",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_launchable_respects_in_flight_and_unscoped_nodes",
+          "lines": "138-148",
+          "text": "138| def test_launchable_respects_in_flight_and_unscoped_nodes():\n139|     plan = _approved_plan([sub(\"1\", write_scope=[\"app/**\"]), sub(\"2\", write_scope=[\"docs\"]),\n140|                            sub(\"3\", write_scope=[\"app/x.py\"], deps=[\"1\"])])\n141|     ids = [s[\"id\"] for s in P.launchable_subtasks(plan, set(), 5)]\n142|     assert ids == [\"1\", \"2\"]\n143|     plan[\"subtasks\"][0][\"status\"] = P.SUBTASK_RUNNING\n144|     assert [s[\"id\"] for s in P.launchable_subtasks(plan, {\"1\"}, 5)] == [\"2\"]\n145|     # A pre-0.3.1 node without a write_scope key conflicts with everything.\n146|     del plan[\"subtasks\"][1][\"write_scope\"]\n147|     assert P.launchable_subtasks(plan, {\"1\"}, 5) == []\n148|     assert P.launchable_subtasks(plan, set(), 0) == []"
+        },
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "Tracker",
+          "lines": "37-73",
+          "text": "37| class Tracker:\n38|     \"\"\"Fake executor measuring real concurrency.\"\"\"\n39| \n40|     def __init__(self, delay=0.15, barrier=None, tokens=0, on_peak=None):\n41|         self.delay = delay\n42|         self.barrier = barrier\n43|         self.tokens = tokens\n44|         self.on_peak = on_peak\n45|         self.lock = threading.Lock()\n46|         self.active = 0\n47|         self.max_active = 0\n48|         self.order: list[str] = []\n49|         self.kwargs: dict[str, dict] = {}"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py -k overlap",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:plan 含 3 个 write_scope 部分重叠的 ready 子任务，capacity=3 | 期望:launchable_subtasks 返回结果中任意两节点 scopes_overlap 为 False，且总数小于 3 | 测试:pytest tests/test_parallel.py -k overlap | 边界:空 write_scope 只读节点不被互斥排除",
+        "前提:通过 _run 执行上述 plan | 期望:重叠子任务的执行时间区间不重叠，非重叠子任务仍并行 | 测试:pytest tests/test_parallel.py::test_overlapping_scopes_are_serialized | 边界:capacity=1 时退化为严格串行仍通过"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "回归验证既有并行、写入范围与调用方行为",
+      "kind": "verify",
+      "files": [
+        "tests/test_parallel.py",
+        "tests/test_write_scope.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_counters_are_exact_under_concurrency",
+          "line": 186,
+          "reason": "并发计数回归",
+          "status": "confirmed"
+        },
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_overlap_is_conservative",
+          "line": 47,
+          "reason": "重叠判定语义回归",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "line": 710,
+          "reason": "调用方行为回归",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_parallel.py",
+          "symbol": "test_counters_are_exact_under_concurrency",
+          "lines": "186-196",
+          "text": "186| def test_counters_are_exact_under_concurrency(par, monkeypatch):\n187|     llm = PlannerLLM([plan_json(sub(\"1\"), sub(\"2\"), sub(\"3\"), sub(\"4\"))])\n188|     ex = Tracker(delay=0.05, tokens=1000)\n189|     rec = Recorder()\n190|     res = _run(monkeypatch, ex, rec, llm)\n191|     assert res[\"status\"] == \"succeeded\"\n192|     totals = rec.plan_store.load()[\"totals\"]\n193|     assert totals[\"tokens\"] == 4 * 1010\n194|     assert totals[\"steps\"] == 4 * 2  # ok() reports 2 iterations each\n195|     assert totals[\"active_seconds\"] > 0\n196|     assert ex.max_active == 2"
+        },
+        {
+          "path": "tests/test_write_scope.py",
+          "symbol": "test_overlap_is_conservative",
+          "lines": "47-53",
+          "text": "47| def test_overlap_is_conservative():\n48|     assert scopes_overlap([\"app/**\"], [\"app/main.py\"])\n49|     assert scopes_overlap([\"**\"], [\"x\"])\n50|     assert scopes_overlap([\"src/*.py\"], [\"src/a.py\"])\n51|     assert not scopes_overlap([\"src/*.py\"], [\"src/*.ts\"])\n52|     assert not scopes_overlap([\"app\"], [\"tests\"])\n53|     assert not scopes_overlap([], [\"**\"])  # read-only never overlaps"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "lines": "710-786",
+          "text": "710| def pick_next_node(state: WorkflowState) -> dict[str, Any]:\n711|     \"\"\"Scheduler: decide what to launch, whether to wait, pause or exit.\n712| \n713|     Pauses / exits are only taken when nothing is in flight (drain first).\"\"\"\n714|     plan = state[\"plan\"]\n715|     ctx = state[\"ctx\"]\n716|     in_flight = ctx.in_flight()\n717|     fresh = state[\"store\"].load()\n718|     if isinstance(fresh, dict) and fresh.get(\"cancel_requested\"):\n719|         plan[\"cancel_requested\"] = True\n720|     if plan.get(\"cancel_requested\"):\n721|         ctx.cancel.set(\"用户取消\")\n722|         return {\"route\": \"wait\", \"launch\": []} if in_flight else {\"route\": \"cancel\"}"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py tests/test_write_scope.py",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:修复已合入工作区 | 期望:并行与写入范围测试全部通过，无新增失败 | 测试:pytest tests/test_parallel.py tests/test_write_scope.py | 边界:test_counters_are_exact_under_concurrency 与 test_overlap_is_conservative 仍通过",
+        "前提:修复已合入工作区 | 期望:workflow.pick_next_node 与 _start_subtask 消费 launchable_subtasks 返回值行为不变，无重复启动重叠子任务 | 测试:pytest tests/test_parallel.py::test_launchable_respects_in_flight_and_unscoped_nodes | 边界:in_flight 为空与含崩溃恢复 running 节点两种场景"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务2的 write_scope 含 app/write_scope.py，但该文件的修改仅为条件性（to-verify），且根因未确认；bugfix 应把修改范围收敛到已确认根因所在文件，避免无需求改动。",
+      "子任务2的 targets 中 scopes_overlap 的 status=to-verify，但 modify 的 write_scope 已包含 app/write_scope.py；规则要求 confirmed 时 symbol 必须真实存在，且不应在根因未确认时把文件纳入写范围。",
+      "子任务3描述称“追加到现有文件，不新建文件”，但 write_scope 为 tests/test_parallel.py 且 targets 引用 test_launchable_respects_in_flight_and_unscoped_nodes 与 Tracker，需确认这些符号真实存在；若新增测试函数，应明确其为新建符号而非已有 symbol。",
+      "子任务3的验收标准中 test_overlapping_scopes_are_serialized 是拟新增测试名，但未在描述中明确该测试函数为新建，且 targets 未列出新建符号，存在验收目标与实现不一致。",
+      "子任务4为 verify 但 write_scope 为空且 targets 引用测试符号，verify 应 depends_on 相关 modify（已满足），但缺少对 workflow.pick_next_node 调用方行为的验证，影响面摘要明确要求为受影响调用方安排验证。",
+      "子任务1为 analyze 但 targets 含 workflow.py:pick_next_node，仅作阅读确认，未在后续子任务中安排对该调用方的验证，影响面要求未落实。",
+      "子任务2验收标准引用 test_overlapping_scopes_are_serialized，但该测试在子任务3才创建，存在依赖顺序与验收可执行性问题；应把该测试的创建前置于验收或调整验收引用。",
+      "子任务3的边界条件“MAX_PARALLEL=1 时退化为严格串行仍通过”未说明如何设置该常量，验收不可执行。",
+      "子任务4验收标准引用 test_step_budget_is_reserved_across_parallel_launches 与 test_token_breaker_counts_live_parallel_usage，但未在 targets 中列出，且未确认这些符号真实存在。",
+      "整体缺少对 app/engine/workflow.py:pick_next_node 与 _start_subtask 的调用方验证子任务，影响面摘要明确列出需检查/验证的调用方。"
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 9077,
+    "completion_tokens": 3962,
+    "total_tokens": 13039
+  },
+  "cost_usd": 0.004206
+}

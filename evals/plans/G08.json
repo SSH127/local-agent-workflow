@@ -1,0 +1,123 @@
+{
+  "goal": "评估受保护文件（如 .env）在读取工具和规划概览中是否都被正确排除",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位受保护文件排除逻辑",
+      "description": "只读分析 app/tools/registry.py（_read_file、_list_files、_search_code）、app/tools/security.py（resolve_workspace_path 及路径校验）、app/project_context.py（get_file/put_file/_rel_files 与文件索引）以及 app/config.py 中是否存在受保护文件（.env、.env.*、密钥类文件）的排除/屏蔽规则，记录具体函数、常量名与行号，并判断读取工具（read_file/list_files/search_code）是否在返回内容前过滤受保护文件。仅读取源码，不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出读取工具链中所有与受保护文件相关的判断点（文件:行号 + 函数名），或明确说明不存在此类判断",
+        "给出 read_file / list_files / search_code 对 .env 的实际行为结论（是否可读到内容、是否出现在列表中、是否可被搜索命中）"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "定位规划概览中的文件暴露面",
+      "description": "只读分析规划概览/项目上下文构建路径：app/project_context.py 的目录遍历与文件清单生成、app/context_builder.py、app/engine/planning.py 中把项目结构/文件列表注入提示词的部分，确认 .env 等受保护文件是否会出现在规划概览（目录树、文件清单、符号索引）中，记录相关函数与行号。仅读取源码，不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出生成规划概览/项目上下文的入口函数（文件:行号），并说明其文件枚举是否过滤受保护文件",
+        "明确结论：.env 是否会出现在规划概览的文件清单或目录树中"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "检索现有受保护文件测试覆盖",
+      "description": "只读检索 tests/ 目录（含 test_acceptance_gaps.py、test_api.py、test_agent_executor.py、test_reading_budget.py 等）与 evals/ 中是否已有针对 .env / 受保护文件排除的测试或断言，汇总已有覆盖与缺口，输出缺口清单供后续验证任务使用。仅读取，不修改任何文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出与受保护文件排除相关的现有测试（文件:行号 + 测试名），若无则明确说明",
+        "输出一份可检验的缺口清单，指明读取工具侧与规划概览侧各自缺失的断言"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "实测读取工具对 .env 的排除行为",
+      "description": "在只读前提下用现有测试基础设施（tests/conftest.py 的 fixture 与临时工作区）编写并运行一次性验证脚本或 pytest 用例，实际调用 read_file / list_files / search_code 指向工作区根目录的 .env，记录返回结果；不修改仓库源码，仅将临时脚本放在 .agent_scratch 下运行。运行测试会读取工作区 .env 内容，属于敏感数据访问，需谨慎处理输出。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "给出 read_file('.env')、list_files(根目录)、search_code 命中 .env 内容的实际返回摘要（不输出密钥明文）",
+        "结论与子任务 1 的静态分析一致，若不一致则明确指出差异"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "实测规划概览对 .env 的排除行为",
+      "description": "基于子任务 2 定位的入口，构造临时工作区（含 .env 与普通文件），调用项目上下文/规划概览生成函数，检查输出文本中是否出现 .env 文件名或其内容；临时脚本置于 .agent_scratch 下，不修改仓库源码。运行过程会读取临时 .env 内容，需谨慎处理输出。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "给出规划概览输出中是否包含 .env 文件名/内容的实测结论（不输出密钥明文）",
+        "结论与子任务 2 的静态分析一致，若不一致则明确指出差异"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "6",
+      "title": "汇总评估结论",
+      "description": "综合子任务 1-5 的静态分析与实测结果，形成对 C1 的评估结论：读取工具与规划概览是否都正确排除受保护文件，逐项列出已正确排除/未排除的位置、证据（文件:行号、实测输出）与风险等级，并给出是否需要后续修复的建议。仅输出分析结论，不修改任何文件。",
+      "depends_on": [
+        "3",
+        "4",
+        "5"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "对读取工具与规划概览两条路径分别给出「已排除 / 未排除 / 部分排除」的明确判定",
+        "每条判定附带可复核的证据引用（文件:行号或实测输出片段）",
+        "结论覆盖子任务 3 列出的全部缺口项"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

@@ -1,0 +1,115 @@
+{
+  "goal": "Add a PLANNER_MAX_DEPTH config that limits the dependency chain depth in validate_subtasks",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 validate_subtasks 与配置加载",
+      "description": "只读分析 app/planner/ 下的计划校验逻辑（validate_subtasks 所在文件）、app/config.py 的配置项定义与读取方式，以及现有深度/依赖相关常量（如 MAX_PARALLEL、FINAL_VERIFY_MAX_REPLANS）的命名与默认值风格，确定 PLANNER_MAX_DEPTH 应插入的位置与默认值。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确指出 validate_subtasks 的定义文件与函数签名",
+        "列出 config.py 中同类配置项的读取模式与默认值约定",
+        "给出 PLANNER_MAX_DEPTH 的建议默认值与插入点"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新增 PLANNER_MAX_DEPTH 配置项",
+      "description": "在 app/config.py 中按现有风格新增 PLANNER_MAX_DEPTH 配置（环境变量读取、整数解析、合理默认值），并在 .env.example 中补充说明。属于配置变更，需谨慎并保持可回退。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "config.py 暴露 PLANNER_MAX_DEPTH 且默认值符合分析结论",
+        "非法值有安全回退或明确报错",
+        ".env.example 含该项说明"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/config.py",
+        ".env.example"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "在 validate_subtasks 中实现深度限制",
+      "description": "在 validate_subtasks 中计算依赖链最大深度（DAG 最长路径），超过 PLANNER_MAX_DEPTH 时返回可读的校验错误（含实际深度与上限），并处理环检测前置以避免无限递归。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "深度超限时 validate_subtasks 返回明确错误信息",
+        "未超限计划行为不变",
+        "存在环时不会死循环"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/planner/**"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充深度限制单元测试",
+      "description": "在 tests/ 下新增或扩展计划校验测试，覆盖：链深等于上限通过、超过上限失败、宽图（多分支）不误判、环检测仍生效、配置可覆盖默认值。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖上述 5 种场景",
+        "测试通过 monkeypatch/环境变量覆盖 PLANNER_MAX_DEPTH"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_*.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行测试与静态检查验证",
+      "description": "运行新增测试及相关既有测试（pytest tests/ 中计划校验相关用例）与 ruff 检查，确认无回归。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 相关用例全部通过",
+        "ruff 无新增告警",
+        "记录命令与结果摘要"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

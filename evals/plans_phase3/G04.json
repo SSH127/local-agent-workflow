@@ -1,0 +1,350 @@
+{
+  "goal": "分析计划被用户拒绝后重新拆解的完整流程，说明 MAX_PLAN_REJECTIONS 在哪里生效",
+  "task_type": "analysis",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 的定义与全部引用点",
+      "description": "在代码库中全文检索常量 MAX_PLAN_REJECTIONS 的定义位置与所有读取/比较它的位置，确认它在计划审批被拒绝路径上的判定条件（拒绝计数与上限比较、达到上限后的分支行为）。只读分析，不修改任何文件。若检索不到定义，标记 status=to-verify 并在结论中说明实际生效的替代机制。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已对仓库执行 MAX_PLAN_REJECTIONS 全文检索（grep -rn \"MAX_PLAN_REJECTIONS\" app/ tests/） | 期望:输出定义文件+行号、默认值、以及每一处读取该常量的文件+行号+所在函数名，形成引用清单 | 测试:grep -rn \"MAX_PLAN_REJECTIONS\" app/ tests/ | 边界:若常量不存在或仅出现在测试/文档中，需明确标注 to-verify 并说明实际生效的替代机制"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "reason": "计划结构校验异常，拒绝后重拆若校验失败会抛出此异常，是判定分支的关键",
+          "evidence_ref": "E1 L117-L118",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "任务图结构校验入口，重拆产出的任务图必经此校验",
+          "evidence_ref": "E2 L241",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "梳理计划被拒绝后重新拆解的完整调用链",
+      "description": "从审批拒绝入口出发，沿调用链梳理：拒绝如何被记录（计划版本/拒绝计数）、如何触发重新拆解（planner 重新生成任务图）、新版本如何落库与对外暴露。重点引用 app/engine/planning.py 的 validate_subtasks/PlanError 校验环节与 app/engine/workflow.py 的 next_ready_subtask 调度环节，说明每一步的输入输出与状态字段。只读分析。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已完成子任务1的常量引用清单 | 期望:输出一条有序调用链（函数级），从拒绝入口到新计划版本落库，每步标注文件:行号与关键状态字段（如 version/revision/rejection 计数） | 测试:pytest tests/test_task_graph.py::test_skipped_dependency_does_not_count_as_done | 边界:需覆盖拒绝后未达上限（继续重拆）与达到上限（终止/降级）两条分支，并说明目标条款 goal_clauses 在重拆后是否保持不变"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "reason": "重新拆解产出的任务图必须经过结构校验，是重拆流程的必经环节",
+          "evidence_ref": "E2 L241",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "reason": "校验失败时的异常类型，决定重拆失败的分支",
+          "evidence_ref": "E1 L117-L118",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "next_ready_subtask",
+          "reason": "顺序调度器选取下一个子任务，重拆后新任务图的调度入口",
+          "evidence_ref": "E3 L843-L859",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "reason": "调用 next_ready_subtask 的工作流节点选取函数，重拆后调度路径的调用方",
+          "evidence_ref": "E4 L736",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "用现有测试与运行证据验证 MAX_PLAN_REJECTIONS 的生效点",
+      "description": "基于子任务1、2 的结论，选取探索证据中已确认存在的测试（tests/test_task_graph.py）运行并对照断言，确认 MAX_PLAN_REJECTIONS 的实际生效位置与行为（第 N 次拒绝后的分支）。只读验证，不修改测试。若探索证据中未出现的测试文件，需先检索确认存在后再引用，否则标注 to-verify。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:已获得子任务2的调用链结论 | 期望:运行相关测试并输出通过/失败结果，逐条说明哪些断言直接证明了 MAX_PLAN_REJECTIONS 的生效位置，哪些行为尚无测试覆盖 | 测试:pytest tests/test_task_graph.py -q | 边界:若测试未覆盖达到上限的分支，需在结论中明确标注为未验证缺口，不得臆断行为"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_skipped_dependency_does_not_count_as_done",
+          "reason": "探索证据中确认存在的测试，覆盖 next_ready_subtask 调度行为，可用于验证重拆后调度路径",
+          "evidence_ref": "E4 L224",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位 MAX_PLAN_REJECTIONS 的定义与全部引用点",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "line": 117,
+          "reason": "计划结构校验异常，拒绝后重拆若校验失败会抛出此异常，是判定分支的关键",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "任务图结构校验入口，重拆产出的任务图必经此校验",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "lines": "117-118",
+          "text": "117| class PlanError(ValueError):\n118|     \"\"\"Raised when a plan / task-graph is structurally invalid.\"\"\""
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:已对仓库执行 MAX_PLAN_REJECTIONS 全文检索（grep -rn \"MAX_PLAN_REJECTIONS\" app/ tests/） | 期望:输出定义文件+行号、默认值、以及每一处读取该常量的文件+行号+所在函数名，形成引用清单 | 测试:grep -rn \"MAX_PLAN_REJECTIONS\" app/ tests/ | 边界:若常量不存在或仅出现在测试/文档中，需明确标注 to-verify 并说明实际生效的替代机制"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "梳理计划被拒绝后重新拆解的完整调用链",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "line": 241,
+          "reason": "重新拆解产出的任务图必须经过结构校验，是重拆流程的必经环节",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "line": 117,
+          "reason": "校验失败时的异常类型，决定重拆失败的分支",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "next_ready_subtask",
+          "line": 843,
+          "reason": "顺序调度器选取下一个子任务，重拆后新任务图的调度入口",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "line": 736,
+          "reason": "调用 next_ready_subtask 的工作流节点选取函数，重拆后调度路径的调用方",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "validate_subtasks",
+          "lines": "241-301",
+          "text": "241| def validate_subtasks(\n242|     raw: Any,\n243|     max_subtasks: int | None = None,\n244|     *,\n245|     known_ids: set[str] | None = None,\n246|     known_nodes: list[dict[str, Any]] | None = None,\n247|     clause_ids: list[str] | None = None,\n248| ) -> list[dict[str, Any]]:\n249|     \"\"\"Validate a list (or ``{\"subtasks\": [...]}``) of subtask specs.\n250| \n251|     Checks pydantic schema, count ≤ max, unique ids (also vs ``known_ids`` —\n252|     e.g. already-done subtasks kept across a rewrite), every dependency exists,\n253|     no self-dep, no cycle, risk marking, and (static checks before approval):"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "PlanError",
+          "lines": "117-118",
+          "text": "117| class PlanError(ValueError):\n118|     \"\"\"Raised when a plan / task-graph is structurally invalid.\"\"\""
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "next_ready_subtask",
+          "lines": "843-859",
+          "text": "843| def next_ready_subtask(plan: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:\n844|     \"\"\"Pick next subtask for the sequential v1 scheduler.\n845| \n846|     Prefer a ``running`` subtask (resume under the same lease), else the first\n847|     ready pending node (topological list order). Returns\n848|     ``(subtask, \"resume\"|\"ready\"|\"complete\"|\"blocked\")``.\n849|     \"\"\"\n850|     for s in plan.get(\"subtasks\", []):\n851|         if s.get(\"status\") == SUBTASK_RUNNING:\n852|             return s, \"resume\"\n853|     ready = ready_subtasks(plan)\n854|     if ready:\n855|         return ready[0], \"ready\""
+        }
+      ],
+      "test_command": "pytest tests/test_task_graph.py::test_skipped_dependency_does_not_count_as_done",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:已完成子任务1的常量引用清单 | 期望:输出一条有序调用链（函数级），从拒绝入口到新计划版本落库，每步标注文件:行号与关键状态字段（如 version/revision/rejection 计数） | 测试:pytest tests/test_task_graph.py::test_skipped_dependency_does_not_count_as_done | 边界:需覆盖拒绝后未达上限（继续重拆）与达到上限（终止/降级）两条分支，并说明目标条款 goal_clauses 在重拆后是否保持不变"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "用现有测试与运行证据验证 MAX_PLAN_REJECTIONS 的生效点",
+      "kind": "analyze",
+      "files": [
+        "tests/test_task_graph.py"
+      ],
+      "symbols": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_skipped_dependency_does_not_count_as_done",
+          "line": 224,
+          "reason": "探索证据中确认存在的测试，覆盖 next_ready_subtask 调度行为，可用于验证重拆后调度路径",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "tests/test_task_graph.py",
+          "symbol": "test_skipped_dependency_does_not_count_as_done",
+          "lines": "224-228",
+          "text": "224| def test_skipped_dependency_does_not_count_as_done():\n225|     plan = P.new_plan_record(P.validate_subtasks([sub(\"1\"), sub(\"2\", deps=[\"1\"])], 8),\n226|                              \"llm\", requires_approval=False)\n227|     plan[\"subtasks\"][0][\"status\"] = P.SUBTASK_SKIPPED\n228|     assert P.next_ready_subtask(plan)[1] == \"blocked\""
+        }
+      ],
+      "test_command": "pytest tests/test_task_graph.py -q",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:已获得子任务2的调用链结论 | 期望:运行相关测试并输出通过/失败结果，逐条说明哪些断言直接证明了 MAX_PLAN_REJECTIONS 的生效位置，哪些行为尚无测试覆盖 | 测试:pytest tests/test_task_graph.py -q | 边界:若测试未覆盖达到上限的分支，需在结论中明确标注为未验证缺口，不得臆断行为"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务1的 targets 中 app/main.py::approve_plan 标为 confirmed，但探索证据（E1-E5）中并未出现该符号，违反“confirmed 时 symbol 必须真实存在”的规则；应改为 to-verify 或移除。",
+      "子任务1的 targets 中 app/engine/workflow.py::execute_subtask_node 标为 to-verify 但 evidence_ref 引用了不存在的 E13 L1074-L1092（探索证据只有 E1-E5），属于编造证据引用。",
+      "子任务2的 targets 中 app/main.py::_record_version、app/main.py::list_plan_versions、app/engine/workflow.py::MemoryPlanStore 均标为 confirmed，但探索证据中均未出现这些符号，evidence_ref 引用的 E7/E8/E15 不存在，违反 confirmed 规则与“勿编造未出现符号”。",
+      "子任务2的 targets 中 app/engine/workflow.py::StoragePlanStore 标为 to-verify 但 evidence_ref 引用不存在的 E8 L199，属编造证据。",
+      "子任务3的 targets 中 tests/test_plan_traceability.py::test_rejection_records_new_version_keeping_clauses 标为 confirmed，但探索证据未出现该测试符号，evidence_ref 引用不存在的 E8 L242；tests/test_approval_flow.py 与 tests/test_approvals.py 的 symbol 字段填的是文件名而非真实测试函数名，且 evidence_ref 为“项目概览”非工具证据。",
+      "子任务1的 acceptance_criteria 中“测试”字段填的是 grep 命令而非可执行的测试目标，且未结构化拆分为 precondition/expected_behavior/test_target/edge_case 四个字段，不符合结构化验收标准要求。",
+      "子任务2、3的 acceptance_criteria 同样以单行字符串拼接形式给出，未按 precondition/expected_behavior/test_target/edge_case 结构化。",
+      "子任务1的 description 与 acceptance_criteria 中假设常量可能位于 app/config.py，但探索证据未提供该文件，属未验证假设，应在描述中明确标注为待检索而非预设位置。",
+      "子任务3的 description 与 acceptance_criteria 引用了 tests/test_plan_traceability.py、tests/test_approval_flow.py、tests/test_approvals.py，但探索证据未出现这些测试文件，属编造测试目标；应改为 to-verify 或基于实际存在的测试文件。",
+      "analysis 任务共 3 个子任务，符合上限 3，但子任务3 的 kind 为 analyze 却要求运行 pytest，属于验证行为而非纯分析，应明确其为只读验证并确保不修改文件（当前 write_scope 为空，可接受，但需在描述中强调只读）。"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/planning.py",
+      "app/engine/workflow.py",
+      "app/main.py",
+      "app/schemas.py",
+      "app/storage.py",
+      "app/write_scope.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:PlanError",
+      "app/engine/planning.py:next_ready_subtask",
+      "app/engine/planning.py:subtask_delivery",
+      "app/engine/workflow.py:MemoryPlanStore",
+      "app/engine/workflow.py:StoragePlanStore",
+      "app/engine/workflow.py:execute_subtask_node",
+      "app/engine/workflow.py:pick_next_node",
+      "app/main.py:_plan_or_404",
+      "app/main.py:get_plan_version",
+      "app/main.py:list_plan_versions",
+      "app/main.py:reject_plan",
+      "app/schemas.py:PlanApprovalRequest",
+      "app/schemas.py:SubtaskConfirmRequest",
+      "app/schemas.py:SubtaskEditRequest",
+      "app/storage.py:append_plan_version",
+      "app/storage.py:get_plan"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 34
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "MAX_PLAN_REJECTIONS"
+        },
+        "chars": 467
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "rejection",
+          "limit": 20
+        },
+        "chars": 1584
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/engine/workflow.py",
+          "symbol": "pick_next_node",
+          "max_lines": 60
+        },
+        "chars": 3290
+      },
+      {
+        "tool": "read_symbol",
+        "args": {
+          "path": "app/main.py",
+          "symbol": "reject_plan",
+          "max_lines": 60
+        },
+        "chars": 283
+      }
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 13537,
+    "completion_tokens": 3569,
+    "total_tokens": 17106
+  },
+  "cost_usd": 0.005289
+}

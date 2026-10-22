@@ -1,0 +1,93 @@
+{
+  "goal": "规划器拆解任务时 write_scope 重叠检测对 glob 判断不准，修复 check_write_scopes 并补充测试",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位 check_write_scopes 与现有测试",
+      "description": "在 app/planner/ 下找到 check_write_scopes 的实现（含 glob 匹配逻辑，可能借助 fnmatch/pathlib/PurePath.match），阅读其重叠判定算法；同时检索 tests/ 中已有的 write_scope 相关测试（如 test_acceptance_gaps.py、test_delivery_integrity.py 等），记录当前行为与已知误判场景（如 **/*.py 与 app/*.py、目录前缀与 glob 混用、大小写/分隔符差异）。只读分析，不修改文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "明确指出 check_write_scopes 所在文件与函数行号",
+        "列出至少 3 个当前 glob 重叠判断不准的具体输入样例及期望结果",
+        "列出已有相关测试文件与用例名"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "修复 check_write_scopes 的 glob 重叠判定",
+      "description": "在 app/planner/ 对应模块中重写/修正 write_scope 重叠检测：统一路径规范化（分隔符、大小写策略、相对路径），对 glob 模式做双向包含判定（模式 A 的匹配集合与模式 B 的匹配集合是否可能相交），覆盖 **、*、?、字符类、目录前缀（app/ 等价于 app/**）等情形，避免把不相交模式误判为重叠、也避免漏判。保持函数签名与返回结构不变，不改变调用方契约。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "check_write_scopes 对子任务 1 列出的全部样例给出期望结果",
+        "函数签名与返回类型未变，现有调用方无需改动",
+        "ruff check 对修改文件无新增告警"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/planner/**"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充 glob 重叠检测单元测试",
+      "description": "在 tests/ 下新增或扩展测试文件（如 tests/test_write_scope_overlap.py），覆盖：完全相同的模式、目录前缀与 ** 通配、* 与具体文件名、不相交目录、跨分隔符写法、空/非法模式、以及真实规划器场景（两个 modify 子任务 write_scope 重叠但无依赖应被拒绝）。测试直接调用 check_write_scopes，不依赖网络与 LLM。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增用例覆盖子任务 1 列出的全部样例",
+        "每个用例断言明确（重叠/不重叠）",
+        "测试文件可被 pytest 收集"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_write_scope_overlap.py",
+        "tests/test_acceptance_gaps.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查",
+      "description": "运行 pytest 针对新增测试文件及受影响的规划器/验收测试（如 tests/test_write_scope_overlap.py、tests/test_acceptance_gaps.py、tests/test_delivery_integrity.py），并运行 ruff check 检查修改文件；确认无回归。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 指定测试全部通过",
+        "ruff check 对 app/planner 与新增测试文件无错误",
+        "记录测试输出摘要作为证据"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

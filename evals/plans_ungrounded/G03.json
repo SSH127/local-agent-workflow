@@ -1,0 +1,117 @@
+{
+  "goal": "把 build_project_overview 和 build_grounding 合并为统一的规划上下文构建入口，保持 workflow 行为不变",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位两个构建入口及调用点",
+      "description": "只读分析 app/context_builder.py、app/project_context.py、app/planner/ 与 app/engine/ 中 build_project_overview 与 build_grounding 的定义、签名、返回结构、副作用（IO/缓存/LLM 调用）以及所有调用点（含 tests/、scripts/、evals/ 引用），梳理两者职责重叠与差异，给出合并方案（统一入口函数名、参数、返回结构、兼容层策略）。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出两个函数的定义位置、完整签名与返回类型",
+        "列出全部调用点（文件:行号）并标注各自依赖的返回字段",
+        "给出合并后统一入口的签名与返回结构提案，说明如何保持现有调用方行为不变"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "实现统一规划上下文构建入口",
+      "description": "在 app/context_builder.py（或 project_context.py，按任务1结论）中新增统一入口（如 build_planning_context），内部复用 build_project_overview 与 build_grounding 的现有逻辑，保持两者原有输出字段与语义不变；将原两个函数改为薄封装或保留为兼容别名，避免重复实现。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "统一入口存在且返回同时包含原 overview 与 grounding 的全部字段",
+        "原 build_project_overview / build_grounding 仍可调用且输出与改动前一致（字段级对比）",
+        "无重复的上下文采集逻辑（原逻辑被复用而非复制）"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/context_builder.py",
+        "app/project_context.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "切换调用方到统一入口",
+      "description": "将 app/planner/、app/engine/ 中调用 build_project_overview / build_grounding 的位置改为调用统一入口（或经兼容层），确保 workflow 节点顺序、参数与结果使用方式不变；不改动业务逻辑与提示词内容。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "app/ 下不再有对两个旧函数的直接重复调用（或仅经统一入口/兼容别名）",
+        "workflow 图节点与边未改变，规划输入字段与改动前一致",
+        "ruff 检查通过（line-length 100）"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/planner/**",
+        "app/engine/**"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "补充/调整单元测试",
+      "description": "在 tests/ 中新增或调整测试，覆盖统一入口返回结构包含 overview 与 grounding 全部字段、旧函数兼容行为一致，以及规划流程使用统一入口后输出不变。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试断言统一入口字段集合为两旧函数字段的并集",
+        "存在断言旧函数输出与统一入口对应部分一致的测试",
+        "新增测试在本地可运行且通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_*.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "5",
+      "title": "运行测试与静态检查验证行为不变",
+      "description": "运行 pytest（至少 tests/ 全量或与 planner/context 相关子集）与 ruff，确认合并后 workflow 行为不变、无回归。",
+      "depends_on": [
+        "4"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 相关测试全部通过，无新增失败",
+        "ruff check 通过",
+        "测试输出中可见统一入口与兼容性用例均被执行"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}

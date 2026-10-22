@@ -1,0 +1,1008 @@
+{
+  "goal": "鎶?planning.py 閲岀绾︾浉鍏冲嚱鏁?new_lease銆乴ease_is_live銆乴ease_matches 鎷嗗埌鐙珛妯″潡 app/engine/leases.py锛屼繚鐣欏吋瀹瑰鍏?",
+  "task_type": "feature",
+  "blocked": false,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "确认租约函数定义与调用面",
+      "description": "读取 app/engine/planning.py 中 new_lease/lease_is_live/lease_matches/lease_age_seconds 的完整实现与模块级依赖（_utc_now、config、uuid4、datetime/UTC 导入），并核对 app/engine/workflow.py 中 _start_subtask、SubtaskRecorder._owns_current_attempt、SubtaskRecorder.heartbeat 的导入方式与调用点，确认拆分后需要保留的兼容导入路径（from app.engine.planning import new_lease 等）。仅分析，不改文件。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定 app/engine/planning.py 与 app/engine/workflow.py 当前内容 | 期望:列出四个函数的完整依赖清单与所有调用点，并给出兼容导入方案（planning 重新导出） | 测试:人工核对，无需运行测试 | 边界:若 lease_age_seconds 被 planning 内其他函数使用，需保留在 planning 或双向导入避免循环"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "reason": "待迁移函数本体，需确认其依赖",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "reason": "待迁移函数本体，依赖 lease_age_seconds 与 config.LEASE_TTL_SECONDS",
+          "evidence_ref": "EV3",
+          "evidence_id": "EV3",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "reason": "待迁移函数本体，纯逻辑无外部依赖",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_age_seconds",
+          "reason": "lease_is_live 的依赖，需一并迁移或保留在 planning 中",
+          "evidence_ref": "EV10",
+          "evidence_id": "EV10",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "reason": "主要调用方，确认导入来源以保留兼容",
+          "evidence_ref": "EV23",
+          "evidence_id": "EV23",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "reason": "调用 lease_matches，确认导入来源",
+          "evidence_ref": "EV24",
+          "evidence_id": "EV24",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "reason": "调用 lease_matches/lease_is_live，确认导入来源",
+          "evidence_ref": "EV25",
+          "evidence_id": "EV25",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新建 app/engine/leases.py 并迁移租约函数",
+      "description": "新建 app/engine/leases.py（父目录 app/engine 已存在），把 new_lease、lease_is_live、lease_matches 及它们依赖的 lease_age_seconds 从 app/engine/planning.py 原样搬入，补齐所需导入（uuid4、datetime/UTC、config、_utc_now 的等价实现或从 planning 导入）。函数签名与返回结构保持不变，避免行为变化。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:app/engine/leases.py 已创建且 planning.py 已改为重新导出 | 期望:from app.engine.planning import new_lease, lease_is_live, lease_matches 与 from app.engine.leases import ... 均可用且为同一对象 | 测试:pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel | 边界:planning.py 中若仍有内部引用，需改为引用 leases 中的符号，避免重复定义"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/leases.py",
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "new_lease",
+          "reason": "迁移目标：新建模块承载租约构造逻辑",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_is_live",
+          "reason": "迁移目标：租约存活判定",
+          "evidence_ref": "EV3",
+          "evidence_id": "EV3",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_matches",
+          "reason": "迁移目标：租约归属判定",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_age_seconds",
+          "reason": "lease_is_live 的依赖，随迁以保持模块自洽",
+          "evidence_ref": "EV10",
+          "evidence_id": "EV10",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "reason": "从 planning 移除实现，改为从 leases 重新导出以保留兼容导入",
+          "evidence_ref": "EV1",
+          "evidence_id": "EV1",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "reason": "同上，改为重新导出",
+          "evidence_ref": "EV3",
+          "evidence_id": "EV3",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "reason": "同上，改为重新导出",
+          "evidence_ref": "EV2",
+          "evidence_id": "EV2",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "校验调用方与租约相关测试",
+      "description": "运行租约/并行/恢复一致性相关测试，确认迁移后行为不变、兼容导入生效。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:子任务 2 已完成迁移与兼容导出 | 期望:并行、崩溃恢复、租约竞争相关测试全部通过 | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py | 边界:旧单租约列迁移测试 test_old_single_lease_column_is_migrated 仍需通过"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "reason": "验证调用方在迁移后仍能正确获取租约函数",
+          "evidence_ref": "EV23",
+          "evidence_id": "EV23",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "reason": "验证 lease_matches 调用路径",
+          "evidence_ref": "EV24",
+          "evidence_id": "EV24",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "reason": "验证 lease_is_live/lease_matches 调用路径",
+          "evidence_ref": "EV25",
+          "evidence_id": "EV25",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1",
+        "C2"
+      ],
+      "derived_from": []
+    }
+  ],
+  "coverage": [
+    {
+      "path": "app/engine/planning.py",
+      "role": "modify",
+      "reason": "移除租约函数实现并改为从 app/engine/leases.py 重新导出以保留兼容导入",
+      "evidence_id": "EV1"
+    },
+    {
+      "path": "app/engine/workflow.py",
+      "role": "verify",
+      "reason": "租约函数的主要调用方，迁移后需验证导入与调用行为不变",
+      "evidence_id": "EV23"
+    },
+    {
+      "path": "app/storage.py",
+      "role": "not-needed",
+      "reason": "storage 层的 get_lease/acquire_lease/get_leases 是持久化实现，与本次函数搬迁无关，不改动",
+      "evidence_id": "EV7"
+    }
+  ],
+  "evidence_registry": [
+    {
+      "evidence_id": "EV1",
+      "path": "app/engine/planning.py",
+      "symbol": "new_lease",
+      "kind": "definition",
+      "line_start": 1518,
+      "line_end": 1531,
+      "supports": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV2",
+      "path": "app/engine/planning.py",
+      "symbol": "lease_matches",
+      "kind": "definition",
+      "line_start": 1553,
+      "line_end": 1559,
+      "supports": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV3",
+      "path": "app/engine/planning.py",
+      "symbol": "lease_is_live",
+      "kind": "definition",
+      "line_start": 1544,
+      "line_end": 1550,
+      "supports": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV4",
+      "path": "app/engine/workflow.py",
+      "symbol": "MemoryPlanStore.get_lease",
+      "kind": "definition",
+      "line_start": 109,
+      "line_end": 115,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV5",
+      "path": "app/engine/workflow.py",
+      "symbol": "MemoryPlanStore.all_leases",
+      "kind": "definition",
+      "line_start": 117,
+      "line_end": 119,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV6",
+      "path": "app/engine/workflow.py",
+      "symbol": "MemoryPlanStore.set_lease",
+      "kind": "definition",
+      "line_start": 121,
+      "line_end": 125,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV7",
+      "path": "app/storage.py",
+      "symbol": "get_lease",
+      "kind": "definition",
+      "line_start": 381,
+      "line_end": 391,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV8",
+      "path": "app/storage.py",
+      "symbol": "acquire_lease",
+      "kind": "definition",
+      "line_start": 409,
+      "line_end": 437,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV9",
+      "path": "app/storage.py",
+      "symbol": "get_leases",
+      "kind": "definition",
+      "line_start": 372,
+      "line_end": 378,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "evidence_id": "EV10",
+      "path": "app/engine/planning.py",
+      "symbol": "lease_age_seconds",
+      "kind": "definition",
+      "line_start": 1534,
+      "line_end": 1541,
+      "supports": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.8
+    },
+    {
+      "evidence_id": "EV11",
+      "path": "tests/test_parallel.py",
+      "symbol": "_crashed_plan",
+      "kind": "test",
+      "line_start": 230,
+      "line_end": 243,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV12",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_old_single_lease_column_is_migrated",
+      "kind": "test",
+      "line_start": 289,
+      "line_end": 306,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV13",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_resume_after_crash_before_status_update_keeps_evidence_and_counters",
+      "kind": "test",
+      "line_start": 158,
+      "line_end": 212,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV14",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_concurrent_lease_acquisition_has_exactly_one_winner",
+      "kind": "test",
+      "line_start": 283,
+      "line_end": 308,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV15",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_late_result_from_superseded_attempt_is_discarded",
+      "kind": "test",
+      "line_start": 311,
+      "line_end": 351,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV16",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_result_never_writes_any_outcome",
+      "kind": "test",
+      "line_start": 359,
+      "line_end": 414,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV17",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_superseded_attempt_recorder_cannot_persist_state_or_status",
+      "kind": "test",
+      "line_start": 417,
+      "line_end": 461,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV18",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_two_non_overlapping_subtasks_run_in_parallel",
+      "kind": "test",
+      "line_start": 101,
+      "line_end": 122,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV19",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "test_takeover_replaces_crashed_lease_and_clears_exec_state",
+      "kind": "test",
+      "line_start": 464,
+      "line_end": 488,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV20",
+      "path": "tests/test_parallel.py",
+      "symbol": "test_crash_recovery_with_two_expired_leases",
+      "kind": "test",
+      "line_start": 246,
+      "line_end": 262,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV21",
+      "path": "tests/test_recovery_consistency.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 188,
+      "line_end": 188,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV22",
+      "path": "tests/test_task_graph.py",
+      "symbol": "",
+      "kind": "test",
+      "line_start": 492,
+      "line_end": 492,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV23",
+      "path": "app/engine/workflow.py",
+      "symbol": "_start_subtask",
+      "kind": "caller",
+      "line_start": 835,
+      "line_end": 975,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV24",
+      "path": "app/engine/workflow.py",
+      "symbol": "SubtaskRecorder._owns_current_attempt",
+      "kind": "caller",
+      "line_start": 345,
+      "line_end": 354,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV25",
+      "path": "app/engine/workflow.py",
+      "symbol": "SubtaskRecorder.heartbeat",
+      "kind": "caller",
+      "line_start": 356,
+      "line_end": 367,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV26",
+      "path": "app/engine/workflow.py",
+      "symbol": "recover_runs_on_startup",
+      "kind": "caller",
+      "line_start": 1668,
+      "line_end": 1691,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV27",
+      "path": "app/main.py",
+      "symbol": "_lazy_recover",
+      "kind": "caller",
+      "line_start": 364,
+      "line_end": 379,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV28",
+      "path": "app/engine/workflow.py",
+      "symbol": "_collect",
+      "kind": "caller",
+      "line_start": 978,
+      "line_end": 1071,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV29",
+      "path": "app/main.py",
+      "symbol": "_plan_view",
+      "kind": "caller",
+      "line_start": 382,
+      "line_end": 422,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV30",
+      "path": "app/engine/workflow.py",
+      "symbol": "StoragePlanStore.acquire",
+      "kind": "caller",
+      "line_start": 183,
+      "line_end": 185,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV31",
+      "path": "app/engine/workflow.py",
+      "symbol": "StoragePlanStore.all_leases",
+      "kind": "caller",
+      "line_start": 175,
+      "line_end": 177,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV32",
+      "path": "app/storage.py",
+      "symbol": "get_lease",
+      "kind": "caller",
+      "line_start": 381,
+      "line_end": 391,
+      "supports": [
+        "C1"
+      ],
+      "confidence": 0.6
+    },
+    {
+      "evidence_id": "EV33",
+      "path": "app/config.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 248,
+      "line_end": 248,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV34",
+      "path": "app/engine/planning.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 1549,
+      "line_end": 1549,
+      "supports": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV35",
+      "path": "app/planner/explore.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 345,
+      "line_end": 345,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.4
+    },
+    {
+      "evidence_id": "EV36",
+      "path": "app/planner/quality.py",
+      "symbol": "",
+      "kind": "text",
+      "line_start": 111,
+      "line_end": 111,
+      "supports": [
+        "C2"
+      ],
+      "confidence": 0.4
+    }
+  ],
+  "grounding_warnings": [],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "确认租约函数定义与调用面",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "line": 1518,
+          "reason": "待迁移函数本体，需确认其依赖",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "line": 1544,
+          "reason": "待迁移函数本体，依赖 lease_age_seconds 与 config.LEASE_TTL_SECONDS",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "line": 1553,
+          "reason": "待迁移函数本体，纯逻辑无外部依赖",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_age_seconds",
+          "line": 1534,
+          "reason": "lease_is_live 的依赖，需一并迁移或保留在 planning 中",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "line": 835,
+          "reason": "主要调用方，确认导入来源以保留兼容",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "line": 345,
+          "reason": "调用 lease_matches，确认导入来源",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "line": 356,
+          "reason": "调用 lease_matches/lease_is_live，确认导入来源",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "lines": "1518-1531",
+          "text": "1518| def new_lease(\n1519|     run_id: str, subtask_id: str, attempt_number: int, holder: str,\n1520| ) -> dict[str, Any]:\n1521|     now = _utc_now()\n1522|     return {\n1523|         \"lease_id\": uuid4().hex,\n1524|         \"run_id\": run_id,\n1525|         \"subtask_id\": subtask_id,\n1526|         \"attempt_number\": int(attempt_number),\n1527|         \"holder\": holder,\n1528|         \"state\": \"running\",          # running | waiting (approval/input) | released\n1529|         \"acquired_at\": now,\n1530|         \"heartbeat_at\": now,"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "lines": "1544-1550",
+          "text": "1544| def lease_is_live(lease: dict[str, Any] | None, ttl: float | None = None) -> bool:\n1545|     \"\"\"A ``running`` lease whose heartbeat is younger than the TTL is held by a\n1546|     live executor; an older one is a crashed attempt.\"\"\"\n1547|     if not isinstance(lease, dict) or lease.get(\"state\") != \"running\":\n1548|         return False\n1549|     limit = ttl if ttl is not None else config.LEASE_TTL_SECONDS\n1550|     return lease_age_seconds(lease) < limit"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "lines": "1553-1559",
+          "text": "1553| def lease_matches(lease: dict[str, Any] | None, subtask_id: str, attempt: int) -> bool:\n1554|     if not isinstance(lease, dict):\n1555|         return False\n1556|     return (\n1557|         lease.get(\"subtask_id\") == subtask_id\n1558|         and int(lease.get(\"attempt_number\") or 0) == int(attempt)\n1559|     )"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:给定 app/engine/planning.py 与 app/engine/workflow.py 当前内容 | 期望:列出四个函数的完整依赖清单与所有调用点，并给出兼容导入方案（planning 重新导出） | 测试:人工核对，无需运行测试 | 边界:若 lease_age_seconds 被 planning 内其他函数使用，需保留在 planning 或双向导入避免循环"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "新建 app/engine/leases.py 并迁移租约函数",
+      "kind": "modify",
+      "files": [
+        "app/engine/leases.py",
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "new_lease",
+          "line": null,
+          "reason": "迁移目标：新建模块承载租约构造逻辑",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_is_live",
+          "line": null,
+          "reason": "迁移目标：租约存活判定",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_matches",
+          "line": null,
+          "reason": "迁移目标：租约归属判定",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_age_seconds",
+          "line": null,
+          "reason": "lease_is_live 的依赖，随迁以保持模块自洽",
+          "status": "new"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "line": 1518,
+          "reason": "从 planning 移除实现，改为从 leases 重新导出以保留兼容导入",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "line": 1544,
+          "reason": "同上，改为重新导出",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "line": 1553,
+          "reason": "同上，改为重新导出",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "lines": "1518-1531",
+          "text": "1518| def new_lease(\n1519|     run_id: str, subtask_id: str, attempt_number: int, holder: str,\n1520| ) -> dict[str, Any]:\n1521|     now = _utc_now()\n1522|     return {\n1523|         \"lease_id\": uuid4().hex,\n1524|         \"run_id\": run_id,\n1525|         \"subtask_id\": subtask_id,\n1526|         \"attempt_number\": int(attempt_number),\n1527|         \"holder\": holder,\n1528|         \"state\": \"running\",          # running | waiting (approval/input) | released\n1529|         \"acquired_at\": now,\n1530|         \"heartbeat_at\": now,"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "lines": "1544-1550",
+          "text": "1544| def lease_is_live(lease: dict[str, Any] | None, ttl: float | None = None) -> bool:\n1545|     \"\"\"A ``running`` lease whose heartbeat is younger than the TTL is held by a\n1546|     live executor; an older one is a crashed attempt.\"\"\"\n1547|     if not isinstance(lease, dict) or lease.get(\"state\") != \"running\":\n1548|         return False\n1549|     limit = ttl if ttl is not None else config.LEASE_TTL_SECONDS\n1550|     return lease_age_seconds(lease) < limit"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "lines": "1553-1559",
+          "text": "1553| def lease_matches(lease: dict[str, Any] | None, subtask_id: str, attempt: int) -> bool:\n1554|     if not isinstance(lease, dict):\n1555|         return False\n1556|     return (\n1557|         lease.get(\"subtask_id\") == subtask_id\n1558|         and int(lease.get(\"attempt_number\") or 0) == int(attempt)\n1559|     )"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:app/engine/leases.py 已创建且 planning.py 已改为重新导出 | 期望:from app.engine.planning import new_lease, lease_is_live, lease_matches 与 from app.engine.leases import ... 均可用且为同一对象 | 测试:pytest tests/test_parallel.py::test_two_non_overlapping_subtasks_run_in_parallel | 边界:planning.py 中若仍有内部引用，需改为引用 leases 中的符号，避免重复定义"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "校验调用方与租约相关测试",
+      "kind": "verify",
+      "files": [
+        "app/engine/workflow.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "line": 835,
+          "reason": "验证调用方在迁移后仍能正确获取租约函数",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "line": 345,
+          "reason": "验证 lease_matches 调用路径",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "line": 356,
+          "reason": "验证 lease_is_live/lease_matches 调用路径",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "lines": "835-975",
+          "text": "835| def _start_subtask(state: WorkflowState, sid: str) -> bool:\n836|     \"\"\"Lease + attempt bookkeeping on the control-loop thread, then submit the\n837|     executor call to the pool. Returns False when the subtask cannot start.\"\"\"\n838|     plan = state[\"plan\"]\n839|     store = state[\"store\"]\n840|     ctx = state[\"ctx\"]\n841|     sub = P.find_subtask(plan, sid)\n842|     assert sub is not None\n843|     legacy = P.is_legacy(plan)\n844|     lease = store.get_lease(sid)\n845|     resume_obj: ResumeState | None = None\n846|     record = _intervention(ctx)\n847|     run_resume = state.get(\"resume\")"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "lines": "345-354",
+          "text": "345|     def _owns_current_attempt(self) -> bool:\n346|         \"\"\"True while this attempt still owns the subtask's execution lease.\n347| \n348|         A takeover bumps the attempt number and installs a new lease. From that\n349|         moment this recorder belongs to a superseded attempt: anything it writes\n350|         (conversation state, run status) is a late result and must not touch the\n351|         newer attempt's state. Read paths (tool steps) are still recorded, since\n352|         the work really happened and the step carries its attempt number.\n353|         \"\"\"\n354|         return P.lease_matches(self._store.get_lease(self._sid), self._sid, self._attempt)"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "lines": "356-367",
+          "text": "356|     def heartbeat(self, state: str | None = None) -> None:\n357|         with self._ctx.lease_lock:\n358|             lease = self._store.get_lease(self._sid)\n359|             if not P.lease_matches(lease, self._sid, self._attempt):\n360|                 return\n361|             if lease.get(\"state\") == \"released\":\n362|                 return\n363|             lease = dict(lease)\n364|             lease[\"heartbeat_at\"] = utc_now()\n365|             if state:\n366|                 lease[\"state\"] = state\n367|             self._store.set_lease(lease)"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py tests/test_recovery_consistency.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:子任务 2 已完成迁移与兼容导出 | 期望:并行、崩溃恢复、租约竞争相关测试全部通过 | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py | 边界:旧单租约列迁移测试 test_old_single_lease_column_is_migrated 仍需通过"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务2的 write_scope 包含新建文件 app/engine/leases.py，但描述中未明确标注“新建文件”，违反新建文件须在描述中标明的要求",
+      "子任务2的 targets 中 app/engine/leases.py 的 status=new，但 evidence_id 引用的是 planning.py 中的符号（EV1/EV2/EV3/EV10），path 与 evidence 不一致，违反每个 target 必须带 evidence_id 且 path/symbol 一致的要求",
+      "子任务2的 write_scope 与 targets 路径未一一对应：write_scope 含 app/engine/leases.py 与 app/engine/planning.py，但 targets 中 leases.py 的 4 个 target 均引用 planning.py 的证据，无法证明 leases.py 中符号真实存在，status=new 的 target 不应引用已存在文件的 evidence",
+      "子任务3为 verify，其 targets 引用了 workflow.py 的调用方符号，但 verify 的 targets 应聚焦验证目标而非重复 modify 的调用方；且 verify 未覆盖新建模块 leases.py 的导入正确性",
+      "子任务1为 analyze，但 targets 中 status=confirmed 的符号需真实存在，lease_age_seconds 的 evidence EV10 conf=0.8 且为 definition，可接受；但 analyze 子任务不应包含 workflow.py 调用方作为 target 的强绑定，应仅作分析参考",
+      "顶层缺少 coverage 字段，未给 app/engine/planning.py、app/engine/workflow.py、app/storage.py 指定角色",
+      "子任务2验收标准中测试目标 test_two_non_overlapping_subtasks_run_in_parallel 与租约函数迁移关联性弱，未直接验证 new_lease/lease_is_live/lease_matches 的兼容导入同一性",
+      "子任务3验收标准缺少结构化 edge_case 字段，仅文字描述边界",
+      "子任务2未处理 lease_age_seconds 在 planning.py 内部其他函数的引用（EV34 文本证据提示 L1549 附近有引用），描述中仅笼统提及“若仍有内部引用”，未给出明确方案",
+      "子任务1的 acceptance_criteria 未结构化（缺 precondition/expected_behavior/test_target/edge_case 字段分离），仅为单条文字"
+    ],
+    "revised_coverage": [
+      {
+        "path": "app/engine/planning.py",
+        "role": "源模块：迁出四个租约函数实现，改为从 leases 重新导出以保留兼容导入"
+      },
+      {
+        "path": "app/engine/workflow.py",
+        "role": "调用方：_start_subtask、SubtaskRecorder._owns_current_attempt、SubtaskRecorder.heartbeat 通过 planning 导入租约函数，迁移后须保持可用"
+      },
+      {
+        "path": "app/storage.py",
+        "role": "持久化层：get_lease/acquire_lease/get_leases 为租约数据来源，本次不改动，仅作为行为不变的下游依赖"
+      }
+    ],
+    "applied": false,
+    "rejected_by_gates": [
+      "证据绑定失败：coverage app/engine/planning.py 角色「源模块：迁出四个租约函数实现，改为从 leases 重新导出以保留兼容导入」无效；coverage app/engine/workflow.py 角色「调用方：_start_subtask、subtaskrecorder._owns_current_attempt、subtaskrecorder.heartbeat 通过 planning 导入租约函数，迁移后须保持可用」无效；coverage app/storage.py 角色「持久化层：get_lease/acquire_lease/get_leases 为租约数据来源，本次不改动，仅作为行为不变的下游依赖」无效；coverage app/engine/planning.py 角色与 write_scope 不一致（应为 modify）"
+    ]
+  },
+  "explore": {
+    "budget_used": 4,
+    "done_reason": "enough",
+    "key_files": [
+      "app/engine/__init__.py",
+      "app/engine/approvals.py",
+      "app/engine/planning.py",
+      "app/engine/runner.py",
+      "app/engine/workflow.py",
+      "app/storage.py"
+    ],
+    "key_symbols": [
+      "app/engine/planning.py:lease_is_live",
+      "app/engine/planning.py:lease_matches",
+      "app/engine/planning.py:new_lease",
+      "app/engine/workflow.py:MemoryPlanStore.all_leases",
+      "app/engine/workflow.py:MemoryPlanStore.get_lease",
+      "app/engine/workflow.py:MemoryPlanStore.set_lease",
+      "app/engine/workflow.py:all_leases",
+      "app/engine/workflow.py:get_lease",
+      "app/engine/workflow.py:set_lease",
+      "app/storage.py:acquire_lease",
+      "app/storage.py:get_lease",
+      "app/storage.py:get_leases"
+    ],
+    "steps": [
+      {
+        "op": "seed",
+        "n_items": 24
+      },
+      {
+        "tool": "search_symbol",
+        "args": {
+          "query": "lease_age_seconds"
+        },
+        "chars": 150
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "LEASE_TTL_SECONDS",
+          "limit": 10
+        },
+        "chars": 380
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "from app.engine.planning import",
+          "limit": 15
+        },
+        "chars": 145
+      },
+      {
+        "tool": "search_text",
+        "args": {
+          "query": "lease_is_live\\|lease_matches\\|new_lease\\|lease_age_seconds",
+          "limit": 30
+        },
+        "chars": 64
+      }
+    ],
+    "extra_round": false
+  },
+  "errors": [
+    "证据绑定失败：子任务 1 target app/engine/planning.py:new_lease 缺少 evidence_id；子任务 1 target app/engine/planning.py:lease_is_live 缺少 evidence_id；子任务 1 target app/engine/planning.py:lease_matches 缺少 evidence_id；子任务 1 target app/engine/planning.py:lease_age_seconds 缺少 evidence_id；子任务 1 target app/engine/workflow.py:_start_subtask 缺少 evidence_id；子任务 1 target app/engine/workflow.py:SubtaskRecorder._owns_current_attempt 缺少 evidence_id；子任务 1 target app/engine/workflow.py:SubtaskRecorder.heartbeat 缺少 evidence_id；子任务 2 target app/engine/planning.py:new_lease 缺少 evidence_id；子任务 2 target app/engine/planning.py:lease_is_live 缺少 evidence_id；子任务 2 target app/engine/planning.py:lease_matches 缺少 evidence_id"
+  ],
+  "usage": {
+    "prompt_tokens": 20841,
+    "completion_tokens": 6408,
+    "total_tokens": 27249
+  },
+  "cost_usd": 0.008527
+}

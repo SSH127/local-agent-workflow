@@ -1,0 +1,94 @@
+{
+  "goal": "把 build_project_overview 和 build_grounding 合并为统一的规划上下文构建入口，保持 workflow 行为不变",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析两个入口的调用方与行为契约",
+      "description": "只读分析 app/engine/planning.py 中 build_project_overview（L1533-1576）与 build_grounding（L1845-1856）的实现、参数、返回类型与失败语义；定位所有调用方（至少 build_grounded_planner_messages@L1859，以及 scripts/try_plan.py、evals、tests 中的引用），确认 overview 字符串与 grounding dict 在 planner messages 中的拼接方式与顺序，明确合并后必须保持不变的输出契约（overview 文本内容、grounding 为 None 的降级路径、max_chars 默认值来源 config.PLANNER_OVERVIEW_MAX_CHARS / PLANNER_CONTEXT_MAX_CHARS、PLANNER_GROUNDING 开关）。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出 build_project_overview 与 build_grounding 的全部调用点（文件:行号）",
+        "明确合并入口的函数签名、返回结构（如 {overview, grounding}）与 None/异常降级语义",
+        "列出必须保持不变的既有行为清单（开关、默认上限、异常吞掉策略、拼接顺序）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "实现统一的规划上下文构建入口",
+      "description": "在 app/engine/planning.py 中新增统一入口（如 build_planning_context(goal, workspace, overview_max_chars=None, grounding_max_chars=None) -> dict），内部复用现有 build_project_overview 与 build_grounding 逻辑（可保留二者为薄封装以兼容旧调用方），保证 overview 文本、grounding dict 或 None、异常降级与默认上限与合并前完全一致；更新 build_grounded_planner_messages 改用统一入口，输出消息内容不变。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增统一入口函数并在 build_grounded_planner_messages 中使用",
+        "build_project_overview / build_grounding 仍可被旧调用方以原签名调用且行为不变",
+        "grounding 关闭或抛异常时统一入口返回的 overview 与 grounding=None 与合并前一致"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "补充统一入口的回归测试",
+      "description": "在 tests/ 下新增或扩展测试，覆盖统一入口：overview 内容与旧 build_project_overview 一致、grounding 开启时返回 pack、PLANNER_GROUNDING 关闭或 build_grounding_pack 抛异常时 grounding 为 None 且 overview 仍返回、max_chars 参数透传、非法 workspace 返回空 overview。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "新增测试覆盖上述 5 类场景",
+        "测试仅依赖公开入口，不复制实现细节"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "tests/test_planning_context.py",
+        "tests/test_*.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行测试与静态检查验证行为不变",
+      "description": "运行 pytest（至少 tests/test_planning_context.py 及与 planning/workflow 相关的测试，如 tests/test_task_graph.py、tests/test_plan_traceability.py）与 ruff check，确认无回归、无 lint 错误。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest 相关测试全部通过",
+        "ruff check 无新增告警",
+        "测试输出中无 grounding/overview 行为差异导致的失败"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [
+    "子任务 4: 描述中提到的文件 tests/test_planning_context.py 不存在"
+  ]
+}

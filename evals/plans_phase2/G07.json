@@ -1,0 +1,427 @@
+{
+  "goal": "把 planning.py 里租约相关函数 new_lease、lease_is_live、lease_matches 拆到独立模块 app/engine/leases.py，保留兼容导入",
+  "task_type": "refactor",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "定位租约函数、依赖与调用方并确定下沉方案",
+      "description": "只读分析。确认 app/engine/planning.py 中 lease_is_live、lease_matches 的完整实现与行号，并核实 new_lease 是否真实存在（grounding 未列出，需在文件中检索）；列出它们引用的模块级符号（如 lease_age_seconds、config.LEASE_TTL_SECONDS、_utc_now 等）及其定义位置。列出全部调用方：app/engine/workflow.py 的 SubtaskRecorder._owns_current_attempt、SubtaskRecorder.heartbeat、_start_subtask、recover_runs_on_startup，app/main.py 的 _lazy_recover。给出确定性下沉方案：哪些辅助符号随迁到 app/engine/leases.py，哪些保留在 planning.py 并由 leases.py 导入，确保不产生循环导入（若 lease_age_seconds 定义在 planning.py 且被 leases.py 需要，则一并迁入 leases.py 或下沉到无依赖的底层模块）。产出：待迁移符号清单（含真实行号）、依赖清单、调用方清单、循环导入规避方案。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "前提:给定 app/engine/planning.py 现有内容 | 期望:输出 lease_is_live、lease_matches 的完整源码与真实行号，明确 new_lease 是否存在（存在则给行号，不存在则标注并调整迁移范围为两个函数），列出全部调用点文件:行号，并给出确定性的依赖下沉方案与循环导入规避结论 | 测试:人工审阅（analyze 无自动测试） | 边界:若 new_lease 不存在，报告须明确将其从迁移范围移除，后续子任务不得引用该符号"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "reason": "确认实现、真实行号与依赖",
+          "evidence_ref": "grounding 影响面：lease_is_live ← workflow.py:_start_subtask@L809、recover_runs_on_startup@L1642、main.py:_lazy_recover@L364",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "reason": "确认实现、真实行号与依赖",
+          "evidence_ref": "grounding 影响面：lease_matches ← workflow.py:SubtaskRecorder._owns_current_attempt@L345、heartbeat@L356、_start_subtask@L809",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "reason": "核实是否存在；grounding 未列出该符号",
+          "evidence_ref": "grounding 符号大纲未包含 new_lease",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "reason": "调用方，确认导入方式",
+          "evidence_ref": "L345",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "reason": "调用方，使用 lease_is_live/lease_matches",
+          "evidence_ref": "L809",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_lazy_recover",
+          "reason": "调用方，使用 lease_is_live",
+          "evidence_ref": "L364",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "新建 app/engine/leases.py 并迁移租约函数",
+      "description": "新建文件 app/engine/leases.py（父目录 app/engine 已存在，此文件为新建）。按子任务1 的确定性方案，把 lease_is_live、lease_matches（以及若确认存在的 new_lease）的实现原样迁入，并补齐所需依赖导入；若 lease_age_seconds 等辅助符号定义在 planning.py 且被租约函数使用，按子任务1 结论一并迁入 leases.py 或从无循环依赖的底层模块导入，禁止 leases.py 反向 import planning.py。保持函数签名、docstring、行为完全不变。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:app/engine/leases.py 已按子任务1 方案创建 | 期望:from app.engine.leases import lease_is_live, lease_matches 成功，且对 None、非 dict、state!=running、TTL 边界、attempt_number 为字符串等输入返回与原实现相同结果 | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py | 边界:lease 为 None 或非 dict 时返回 False；attempt_number 为字符串时 int() 转换不抛异常；import app.engine.leases 不触发循环导入"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/leases.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_is_live",
+          "reason": "新建模块承载租约存活判定，实现从 planning.py 原样迁移（新建文件，符号待落地）",
+          "evidence_ref": "子任务1 定位结果",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_matches",
+          "reason": "新建模块承载租约匹配判定，实现从 planning.py 原样迁移（新建文件，符号待落地）",
+          "evidence_ref": "子任务1 定位结果",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "在 planning.py 保留兼容 re-export",
+      "description": "修改 app/engine/planning.py：删除已迁出的租约函数原实现，改为从 app/engine/leases.py 重新导出（from app.engine.leases import lease_is_live, lease_matches，若 new_lease 存在则一并导出），确保现有 from app.engine.planning import lease_is_live 等导入路径继续可用且与 leases.py 中为同一对象。按子任务1 结论处理辅助符号归属，确保不产生循环导入。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "前提:planning.py 已改为 re-export | 期望:from app.engine.planning import lease_is_live, lease_matches 仍成功，且与 app.engine.leases 中同名对象 is 判定为 True | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py | 边界:import app.engine.planning 与 import app.engine.leases 均不触发循环导入；planning.py 中不再保留重复实现"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "targets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "reason": "删除原实现，改为兼容 re-export",
+          "evidence_ref": "子任务1 定位结果",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "reason": "删除原实现，改为兼容 re-export",
+          "evidence_ref": "子任务1 定位结果",
+          "status": "to-verify"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "验证迁移后调用方、兼容导入与测试全绿",
+      "description": "运行受影响调用方相关测试与静态检查，确认 workflow.py、main.py 的租约逻辑行为不变，兼容导入生效且为同一引用。",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "前提:子任务2、3 已完成 | 期望:租约相关测试全部通过，from app.engine.planning import lease_is_live, lease_matches 与 from app.engine.leases import 同名对象 is 判定为 True，ruff 无新增告警 | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py，并运行 import 兼容性断言脚本 | 边界:并发租约获取仍只有一个赢家（test_concurrent_lease_acquisition_has_exactly_one_winner）；旧单租约列迁移测试（test_old_single_lease_column_is_migrated）仍通过；workflow.py:SubtaskRecorder.heartbeat 与 main.py:_lazy_recover 路径行为不变"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "targets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "reason": "验证调用方在迁移后仍正常使用租约函数",
+          "evidence_ref": "L356",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "reason": "验证调用方在迁移后仍正常使用租约函数",
+          "evidence_ref": "L809",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_lazy_recover",
+          "reason": "验证调用方在迁移后仍正常使用 lease_is_live",
+          "evidence_ref": "L364",
+          "status": "confirmed"
+        }
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": [
+    "子任务 1: 描述中提到的文件 app/engine/leases.py 不存在",
+    "子任务 3: 描述中提到的文件 app/engine/leases.py 不存在"
+  ],
+  "handoff_packets": [
+    {
+      "id": "1",
+      "title": "定位租约函数、依赖与调用方并确定下沉方案",
+      "kind": "analyze",
+      "files": [
+        "app/engine/planning.py",
+        "app/engine/workflow.py",
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "line": 1543,
+          "reason": "确认实现、真实行号与依赖",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "line": 1552,
+          "reason": "确认实现、真实行号与依赖",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "line": 1517,
+          "reason": "核实是否存在；grounding 未列出该符号",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder._owns_current_attempt",
+          "line": 345,
+          "reason": "调用方，确认导入方式",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "line": 809,
+          "reason": "调用方，使用 lease_is_live/lease_matches",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_lazy_recover",
+          "line": 364,
+          "reason": "调用方，使用 lease_is_live",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "lines": "1543-1549",
+          "text": "1543| def lease_is_live(lease: dict[str, Any] | None, ttl: float | None = None) -> bool:\n1544|     \"\"\"A ``running`` lease whose heartbeat is younger than the TTL is held by a\n1545|     live executor; an older one is a crashed attempt.\"\"\"\n1546|     if not isinstance(lease, dict) or lease.get(\"state\") != \"running\":\n1547|         return False\n1548|     limit = ttl if ttl is not None else config.LEASE_TTL_SECONDS\n1549|     return lease_age_seconds(lease) < limit"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "lines": "1552-1558",
+          "text": "1552| def lease_matches(lease: dict[str, Any] | None, subtask_id: str, attempt: int) -> bool:\n1553|     if not isinstance(lease, dict):\n1554|         return False\n1555|     return (\n1556|         lease.get(\"subtask_id\") == subtask_id\n1557|         and int(lease.get(\"attempt_number\") or 0) == int(attempt)\n1558|     )"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "new_lease",
+          "lines": "1517-1530",
+          "text": "1517| def new_lease(\n1518|     run_id: str, subtask_id: str, attempt_number: int, holder: str,\n1519| ) -> dict[str, Any]:\n1520|     now = _utc_now()\n1521|     return {\n1522|         \"lease_id\": uuid4().hex,\n1523|         \"run_id\": run_id,\n1524|         \"subtask_id\": subtask_id,\n1525|         \"attempt_number\": int(attempt_number),\n1526|         \"holder\": holder,\n1527|         \"state\": \"running\",          # running | waiting (approval/input) | released\n1528|         \"acquired_at\": now,\n1529|         \"heartbeat_at\": now,"
+        }
+      ],
+      "test_command": null,
+      "depends_on": [],
+      "acceptance_criteria": [
+        "前提:给定 app/engine/planning.py 现有内容 | 期望:输出 lease_is_live、lease_matches 的完整源码与真实行号，明确 new_lease 是否存在（存在则给行号，不存在则标注并调整迁移范围为两个函数），列出全部调用点文件:行号，并给出确定性的依赖下沉方案与循环导入规避结论 | 测试:人工审阅（analyze 无自动测试） | 边界:若 new_lease 不存在，报告须明确将其从迁移范围移除，后续子任务不得引用该符号"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "新建 app/engine/leases.py 并迁移租约函数",
+      "kind": "modify",
+      "files": [
+        "app/engine/leases.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_is_live",
+          "line": null,
+          "reason": "新建模块承载租约存活判定，实现从 planning.py 原样迁移（新建文件，符号待落地）",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/leases.py",
+          "symbol": "lease_matches",
+          "line": null,
+          "reason": "新建模块承载租约匹配判定，实现从 planning.py 原样迁移（新建文件，符号待落地）",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [],
+      "test_command": "pytest tests/test_parallel.py tests/test_recovery_consistency.py",
+      "depends_on": [
+        "1"
+      ],
+      "acceptance_criteria": [
+        "前提:app/engine/leases.py 已按子任务1 方案创建 | 期望:from app.engine.leases import lease_is_live, lease_matches 成功，且对 None、非 dict、state!=running、TTL 边界、attempt_number 为字符串等输入返回与原实现相同结果 | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py | 边界:lease 为 None 或非 dict 时返回 False；attempt_number 为字符串时 int() 转换不抛异常；import app.engine.leases 不触发循环导入"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "在 planning.py 保留兼容 re-export",
+      "kind": "modify",
+      "files": [
+        "app/engine/planning.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "line": 1543,
+          "reason": "删除原实现，改为兼容 re-export",
+          "status": "to-verify"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "line": 1552,
+          "reason": "删除原实现，改为兼容 re-export",
+          "status": "to-verify"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_is_live",
+          "lines": "1543-1549",
+          "text": "1543| def lease_is_live(lease: dict[str, Any] | None, ttl: float | None = None) -> bool:\n1544|     \"\"\"A ``running`` lease whose heartbeat is younger than the TTL is held by a\n1545|     live executor; an older one is a crashed attempt.\"\"\"\n1546|     if not isinstance(lease, dict) or lease.get(\"state\") != \"running\":\n1547|         return False\n1548|     limit = ttl if ttl is not None else config.LEASE_TTL_SECONDS\n1549|     return lease_age_seconds(lease) < limit"
+        },
+        {
+          "path": "app/engine/planning.py",
+          "symbol": "lease_matches",
+          "lines": "1552-1558",
+          "text": "1552| def lease_matches(lease: dict[str, Any] | None, subtask_id: str, attempt: int) -> bool:\n1553|     if not isinstance(lease, dict):\n1554|         return False\n1555|     return (\n1556|         lease.get(\"subtask_id\") == subtask_id\n1557|         and int(lease.get(\"attempt_number\") or 0) == int(attempt)\n1558|     )"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py tests/test_recovery_consistency.py",
+      "depends_on": [
+        "2"
+      ],
+      "acceptance_criteria": [
+        "前提:planning.py 已改为 re-export | 期望:from app.engine.planning import lease_is_live, lease_matches 仍成功，且与 app.engine.leases 中同名对象 is 判定为 True | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py | 边界:import app.engine.planning 与 import app.engine.leases 均不触发循环导入；planning.py 中不再保留重复实现"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "验证迁移后调用方、兼容导入与测试全绿",
+      "kind": "verify",
+      "files": [
+        "app/engine/workflow.py",
+        "app/main.py"
+      ],
+      "symbols": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "line": 356,
+          "reason": "验证调用方在迁移后仍正常使用租约函数",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "line": 809,
+          "reason": "验证调用方在迁移后仍正常使用租约函数",
+          "status": "confirmed"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_lazy_recover",
+          "line": 364,
+          "reason": "验证调用方在迁移后仍正常使用 lease_is_live",
+          "status": "confirmed"
+        }
+      ],
+      "snippets": [
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "SubtaskRecorder.heartbeat",
+          "lines": "356-367",
+          "text": "356|     def heartbeat(self, state: str | None = None) -> None:\n357|         with self._ctx.lease_lock:\n358|             lease = self._store.get_lease(self._sid)\n359|             if not P.lease_matches(lease, self._sid, self._attempt):\n360|                 return\n361|             if lease.get(\"state\") == \"released\":\n362|                 return\n363|             lease = dict(lease)\n364|             lease[\"heartbeat_at\"] = utc_now()\n365|             if state:\n366|                 lease[\"state\"] = state\n367|             self._store.set_lease(lease)"
+        },
+        {
+          "path": "app/engine/workflow.py",
+          "symbol": "_start_subtask",
+          "lines": "809-949",
+          "text": "809| def _start_subtask(state: WorkflowState, sid: str) -> bool:\n810|     \"\"\"Lease + attempt bookkeeping on the control-loop thread, then submit the\n811|     executor call to the pool. Returns False when the subtask cannot start.\"\"\"\n812|     plan = state[\"plan\"]\n813|     store = state[\"store\"]\n814|     ctx = state[\"ctx\"]\n815|     sub = P.find_subtask(plan, sid)\n816|     assert sub is not None\n817|     legacy = P.is_legacy(plan)\n818|     lease = store.get_lease(sid)\n819|     resume_obj: ResumeState | None = None\n820|     record = _intervention(ctx)\n821|     run_resume = state.get(\"resume\")"
+        },
+        {
+          "path": "app/main.py",
+          "symbol": "_lazy_recover",
+          "lines": "364-379",
+          "text": "364| def _lazy_recover(run: dict) -> dict:\n365|     \"\"\"A ``running`` run with no thread here and no live lease anywhere is a\n366|     crashed attempt (e.g. another process died): mark it interrupted.\"\"\"\n367|     if run[\"status\"] != agent_executor.STATUS_RUNNING or runner.is_active(run[\"run_id\"]):\n368|         return run\n369|     leases = [lease for lease in storage.get_leases(run[\"run_id\"]).values()\n370|               if lease.get(\"state\") != \"released\"]\n371|     # Parallel subtasks: the run is crashed only when NONE of its unreleased\n372|     # per-subtask leases has a fresh heartbeat.\n373|     if not leases or any(P.lease_is_live(lease) for lease in leases):\n374|         return run\n375|     transition_run_status(\n376|         run[\"run_id\"], agent_executor.STATUS_RUNNING, storage.STATUS_INTERRUPTED,"
+        }
+      ],
+      "test_command": "pytest tests/test_parallel.py tests/test_recovery_consistency.py，并运行 import 兼容性断言脚本",
+      "depends_on": [
+        "2",
+        "3"
+      ],
+      "acceptance_criteria": [
+        "前提:子任务2、3 已完成 | 期望:租约相关测试全部通过，from app.engine.planning import lease_is_live, lease_matches 与 from app.engine.leases import 同名对象 is 判定为 True，ruff 无新增告警 | 测试:pytest tests/test_parallel.py tests/test_recovery_consistency.py，并运行 import 兼容性断言脚本 | 边界:并发租约获取仍只有一个赢家（test_concurrent_lease_acquisition_has_exactly_one_winner）；旧单租约列迁移测试（test_old_single_lease_column_is_migrated）仍通过；workflow.py:SubtaskRecorder.heartbeat 与 main.py:_lazy_recover 路径行为不变"
+      ]
+    }
+  ],
+  "critic": {
+    "verdict": "revise",
+    "issues": [
+      "子任务2 的 write_scope 为新建文件 app/engine/leases.py，但 targets 中三个符号 status 均为 to-verify，且 evidence_ref 引用 L1543-L1549/L1552-L1558 与 grounding 中 planning.py 实际符号大纲（L117-L453）不符，行号不可信；新建文件应在描述中明确标注新建，targets 应说明符号为新建而非已存在。",
+      "子任务1 中 new_lease 的 evidence_ref 写“grounding 符号大纲（planning.py 另有 60 个符号，new_lease 未给片段）”，但 grounding 未列出 new_lease，说明该符号存在性未确认；分析步骤应把 new_lease 标为 to-verify 并明确若不存在则调整迁移范围，而不是在后续 modify 中默认迁移。",
+      "子任务3 在 planning.py 中删除 lease_is_live/lease_matches 原实现并 re-export，但这两个符号 status=confirmed 仅表示符号存在，未确认其定义位置与依赖（lease_age_seconds、config.LEASE_TTL_SECONDS）是否可安全下沉；且子任务2 与子任务3 存在循环依赖风险（leases.py 可能需 import planning 的 lease_age_seconds），描述中仅说“按子任务1结论决定”，未给出确定性方案。",
+      "验收标准虽含 precondition/expected_behavior/test_target/edge_case，但子任务2 的测试目标 pytest tests/test_parallel.py tests/test_recovery_consistency.py 未覆盖 app/main.py:_lazy_recover 与 workflow.py:SubtaskRecorder.heartbeat 的调用路径；子任务4 的 verify 仅 depends_on 3，未显式依赖子任务2 的迁移落地，且未包含 import 兼容性断言（is 同一引用）的自动化测试。",
+      "子任务4 的 targets 仅列调用方，未列被迁移符号或兼容导入断言；verify 应包含对 from app.engine.planning import ... 与 from app.engine.leases import ... 同一引用的检查。",
+      "步骤数 4 在 refactor 上限 5 内，但子任务1 为 analyze 却包含 targets 且部分 status=confirmed，analyze 目标不应作为 modify 前置的“已确认”依据；应把 analyze 的 targets 全部标 to-verify 或移除 targets。",
+      "子任务2 描述称“迁移前三个符号在 app/engine/leases.py 中尚不存在，故 targets 均标 to-verify”，但 write_scope 已声明该新建文件，规则要求新建文件须在描述中标明——描述已提及“新建文件”，可接受，但 targets 的 evidence_ref 不应引用不存在的行号。",
+      "缺少对 app/engine/planning.py 中 lease_age_seconds（若存在）等辅助符号归属的明确处理，可能导致 leases.py 与 planning.py 循环导入；子任务1 应产出确定性的依赖下沉方案。",
+      "子任务3 的 acceptance_criteria 边界写“若 leases.py 反向 import planning 造成循环导入，import 阶段应报错，需在子任务1结论中规避”，这是把风险留给分析而非在 modify 中给出确定实现，验收标准不可执行。",
+      "子任务4 的 verify 未 depends_on 子任务2，违反“verify 必须 depends_on 相关 modify”的完整性要求（虽间接依赖 3→2，但应显式列出）。"
+    ]
+  },
+  "usage": {
+    "prompt_tokens": 16730,
+    "completion_tokens": 6422,
+    "total_tokens": 23152
+  },
+  "cost_usd": 0.007382
+}

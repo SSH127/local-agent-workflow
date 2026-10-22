@@ -1,0 +1,94 @@
+{
+  "goal": "把 planning.py 里租约相关函数 new_lease、lease_is_live、lease_matches 拆到独立模块 app/engine/leases.py，保留兼容导入",
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "分析租约函数依赖与调用方",
+      "description": "只读分析 app/engine/planning.py 中 new_lease、lease_is_live、lease_matches 及其依赖（lease_age_seconds、config.LEASE_TTL_SECONDS、_utc_now 等），确认哪些辅助符号需一并迁移或保留；列出所有调用方（app/engine/workflow.py 的 SubtaskRecorder._owns_current_attempt/heartbeat/_start_subtask、recover_runs_on_startup、app/main.py._lazy_recover 等）以及测试引用（tests/test_parallel.py、tests/test_recovery_consistency.py）。确认是否存在循环导入风险（planning.py 与 leases.py 的相互依赖）。",
+      "depends_on": [],
+      "kind": "analyze",
+      "acceptance_criteria": [
+        "列出三个函数的完整定义位置与行号",
+        "列出它们依赖的所有模块级符号及其归属（planning.py 内部 / config / 其他）",
+        "列出所有调用点文件与符号，并标注是否需要改动",
+        "明确给出 leases.py 的导入依赖清单，且确认不会与 planning.py 形成循环导入"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "2",
+      "title": "创建 app/engine/leases.py 并迁移三个函数",
+      "description": "新建 app/engine/leases.py，把 new_lease、lease_is_live、lease_matches 的实现原样迁入（含必要的最小依赖，如 lease_age_seconds 若仅被这三个函数使用则一并迁入，否则从 planning 导入）。保持函数签名与行为完全一致。",
+      "depends_on": [
+        "1"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "app/engine/leases.py 存在且定义 new_lease、lease_is_live、lease_matches",
+        "函数签名与 planning.py 原实现逐字一致",
+        "模块可独立 import 且不触发循环导入（python -c 'import app.engine.leases' 成功）"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/leases.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "3",
+      "title": "planning.py 改为兼容再导出",
+      "description": "在 app/engine/planning.py 中删除三个函数的原实现，改为从 app.engine.leases 导入并再导出（from app.engine.leases import new_lease, lease_is_live, lease_matches），保证 `from app.engine.planning import new_lease` 等旧路径继续可用；处理被迁走的辅助符号的引用。",
+      "depends_on": [
+        "2"
+      ],
+      "kind": "modify",
+      "acceptance_criteria": [
+        "planning.py 中不再有这三个函数的 def 定义",
+        "planning.py 顶部从 app.engine.leases 导入这三个名字",
+        "python -c 'from app.engine.planning import new_lease, lease_is_live, lease_matches' 成功",
+        "python -c 'import app.engine.workflow' 成功（无循环导入）"
+      ],
+      "risk": "medium",
+      "reversible": true,
+      "write_scope": [
+        "app/engine/planning.py"
+      ],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    },
+    {
+      "id": "4",
+      "title": "运行相关测试与静态检查",
+      "description": "运行租约/并行/恢复相关测试与全量 pytest，以及 ruff 检查，确认迁移未破坏行为。",
+      "depends_on": [
+        "3"
+      ],
+      "kind": "verify",
+      "acceptance_criteria": [
+        "pytest tests/test_parallel.py tests/test_recovery_consistency.py 全部通过",
+        "pytest 全量通过（或与迁移前基线一致，无新增失败）",
+        "ruff check app/engine/leases.py app/engine/planning.py 无新增告警"
+      ],
+      "risk": "low",
+      "reversible": true,
+      "write_scope": [],
+      "serves_clauses": [
+        "C1"
+      ],
+      "derived_from": []
+    }
+  ],
+  "grounding_warnings": []
+}
