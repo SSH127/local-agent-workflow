@@ -111,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     if llm is None:
         from app.agents.llm import DeepSeekClient
         llm = DeepSeekClient()
+    import os
+    if os.getenv("PLANNER_MODEL"):  # strong planner/critic model (explore keeps tool-capable model)
+        from app.agents.llm import DeepSeekClient
+        llm = DeepSeekClient(model=os.environ["PLANNER_MODEL"])
     meta: dict = {}
     reg_arg = registry if registry else None
     specs, errors, usage = P.request_subtasks_phase2(

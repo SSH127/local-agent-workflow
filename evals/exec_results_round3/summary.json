@@ -1,0 +1,590 @@
+[
+  {
+    "project": "an",
+    "goal_id": "A1",
+    "condition": "direct",
+    "task_type": "bugfix",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 17,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "tests/test_workflow.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "falbot/limits.py",
+      "tests/test_workflow.py"
+    ],
+    "expected_hit": [
+      "falbot/limits.py",
+      "tests/test_workflow.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 15,
+    "diff_removed": 1,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": null,
+    "planner_model": null,
+    "planner_usage": null,
+    "executor_usage": {
+      "prompt_tokens": 4917,
+      "completion_tokens": 437,
+      "total_tokens": 5354
+    },
+    "total_usage": {
+      "prompt_tokens": 4917,
+      "completion_tokens": 437,
+      "total_tokens": 5354
+    },
+    "cost_usd": 0.00156,
+    "plan_seconds": null,
+    "wall_seconds": 6.2,
+    "error": null
+  },
+  {
+    "project": "an",
+    "goal_id": "A1",
+    "condition": "planned",
+    "task_type": "bugfix",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 18,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "tests/test_workflow.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "falbot/limits.py",
+      "tests/test_workflow.py"
+    ],
+    "expected_hit": [
+      "falbot/limits.py",
+      "tests/test_workflow.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 13,
+    "diff_removed": 1,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": 4,
+    "planner_model": "deepseek-reasoner",
+    "planner_usage": {
+      "prompt_tokens": 18714,
+      "completion_tokens": 12692,
+      "total_tokens": 31406
+    },
+    "executor_usage": {
+      "prompt_tokens": 3925,
+      "completion_tokens": 599,
+      "total_tokens": 4524
+    },
+    "total_usage": {
+      "prompt_tokens": 22639,
+      "completion_tokens": 13291,
+      "total_tokens": 35930
+    },
+    "cost_usd": 0.011921,
+    "plan_seconds": 57.8,
+    "wall_seconds": 65.1,
+    "error": null
+  },
+  {
+    "project": "an",
+    "goal_id": "A2",
+    "condition": "direct",
+    "task_type": "feature",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 14,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "tests/test_workflow.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "falbot/models.py",
+      "tests/test_workflow.py"
+    ],
+    "expected_hit": [
+      "falbot/models.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 30,
+    "diff_removed": 0,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": null,
+    "planner_model": null,
+    "planner_usage": null,
+    "executor_usage": {
+      "prompt_tokens": 5549,
+      "completion_tokens": 694,
+      "total_tokens": 6243
+    },
+    "total_usage": {
+      "prompt_tokens": 5549,
+      "completion_tokens": 694,
+      "total_tokens": 6243
+    },
+    "cost_usd": 0.001845,
+    "plan_seconds": null,
+    "wall_seconds": 7.2,
+    "error": null
+  },
+  {
+    "project": "an",
+    "goal_id": "A2",
+    "condition": "planned",
+    "task_type": "feature",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 13,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "tests/test_workflow.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "falbot/models.py",
+      "tests/test_workflow.py"
+    ],
+    "expected_hit": [
+      "falbot/models.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 38,
+    "diff_removed": 0,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": 4,
+    "planner_model": "deepseek-reasoner",
+    "planner_usage": {
+      "prompt_tokens": 22190,
+      "completion_tokens": 16998,
+      "total_tokens": 39188
+    },
+    "executor_usage": {
+      "prompt_tokens": 3163,
+      "completion_tokens": 786,
+      "total_tokens": 3949
+    },
+    "total_usage": {
+      "prompt_tokens": 25353,
+      "completion_tokens": 17784,
+      "total_tokens": 43137
+    },
+    "cost_usd": 0.014568,
+    "plan_seconds": 75.2,
+    "wall_seconds": 82.3,
+    "error": null
+  },
+  {
+    "project": "an",
+    "goal_id": "A3",
+    "condition": "direct",
+    "task_type": "refactor",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 12,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [],
+      "pass": null
+    },
+    "files_changed": [
+      "falbot/limits.py"
+    ],
+    "expected_hit": [
+      "falbot/limits.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 14,
+    "diff_removed": 5,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": null,
+    "planner_model": null,
+    "planner_usage": null,
+    "executor_usage": {
+      "prompt_tokens": 8695,
+      "completion_tokens": 647,
+      "total_tokens": 9342
+    },
+    "total_usage": {
+      "prompt_tokens": 8695,
+      "completion_tokens": 647,
+      "total_tokens": 9342
+    },
+    "cost_usd": 0.002706,
+    "plan_seconds": null,
+    "wall_seconds": 7.1,
+    "error": null
+  },
+  {
+    "project": "an",
+    "goal_id": "A3",
+    "condition": "planned",
+    "task_type": "refactor",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 12,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [],
+      "pass": null
+    },
+    "files_changed": [
+      "falbot/limits.py"
+    ],
+    "expected_hit": [
+      "falbot/limits.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 10,
+    "diff_removed": 2,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": 3,
+    "planner_model": "deepseek-reasoner",
+    "planner_usage": {
+      "prompt_tokens": 16870,
+      "completion_tokens": 15947,
+      "total_tokens": 32817
+    },
+    "executor_usage": {
+      "prompt_tokens": 1856,
+      "completion_tokens": 468,
+      "total_tokens": 2324
+    },
+    "total_usage": {
+      "prompt_tokens": 18726,
+      "completion_tokens": 16415,
+      "total_tokens": 35141
+    },
+    "cost_usd": 0.012138,
+    "plan_seconds": 74.9,
+    "wall_seconds": 79.5,
+    "error": null
+  },
+  {
+    "project": "novelflow",
+    "goal_id": "N1",
+    "condition": "direct",
+    "task_type": "bugfix",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 3,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "app/mypytest/test_math_tools.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "app/core/tools/math.py",
+      "app/mypytest/test_math_tools.py"
+    ],
+    "expected_hit": [
+      "app/core/tools/math.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 26,
+    "diff_removed": 1,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": null,
+    "planner_model": null,
+    "planner_usage": null,
+    "executor_usage": {
+      "prompt_tokens": 5068,
+      "completion_tokens": 465,
+      "total_tokens": 5533
+    },
+    "total_usage": {
+      "prompt_tokens": 5068,
+      "completion_tokens": 465,
+      "total_tokens": 5533
+    },
+    "cost_usd": 0.001614,
+    "plan_seconds": null,
+    "wall_seconds": 9.7,
+    "error": null
+  },
+  {
+    "project": "novelflow",
+    "goal_id": "N1",
+    "condition": "planned",
+    "task_type": "bugfix",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 3,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "app/mypytest/test_agent.py"
+      ],
+      "pass": false
+    },
+    "files_changed": [
+      "app/core/tools/math.py",
+      "app/mypytest/test_agent.py"
+    ],
+    "expected_hit": [
+      "app/core/tools/math.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 13,
+    "diff_removed": 1,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": 3,
+    "planner_model": "deepseek-reasoner",
+    "planner_usage": {
+      "prompt_tokens": 9566,
+      "completion_tokens": 7925,
+      "total_tokens": 17491
+    },
+    "executor_usage": {
+      "prompt_tokens": 3653,
+      "completion_tokens": 389,
+      "total_tokens": 4042
+    },
+    "total_usage": {
+      "prompt_tokens": 13219,
+      "completion_tokens": 8314,
+      "total_tokens": 21533
+    },
+    "cost_usd": 0.007193,
+    "plan_seconds": 38.3,
+    "wall_seconds": 51.5,
+    "error": null
+  },
+  {
+    "project": "novelflow",
+    "goal_id": "N2",
+    "condition": "direct",
+    "task_type": "refactor",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 4,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "app/mypytest/test_tool_router.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "app/core/router/tool_router.py",
+      "app/mypytest/test_tool_router.py"
+    ],
+    "expected_hit": [
+      "app/core/router/tool_router.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 85,
+    "diff_removed": 2,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": null,
+    "planner_model": null,
+    "planner_usage": null,
+    "executor_usage": {
+      "prompt_tokens": 4944,
+      "completion_tokens": 1358,
+      "total_tokens": 6302
+    },
+    "total_usage": {
+      "prompt_tokens": 4944,
+      "completion_tokens": 1358,
+      "total_tokens": 6302
+    },
+    "cost_usd": 0.001955,
+    "plan_seconds": null,
+    "wall_seconds": 12.8,
+    "error": null
+  },
+  {
+    "project": "novelflow",
+    "goal_id": "N2",
+    "condition": "planned",
+    "task_type": "refactor",
+    "check_pass": false,
+    "check_summary": {
+      "passed": 3,
+      "failed": 1,
+      "error": true
+    },
+    "model_tests": {
+      "files": [
+        "app/mypytest/test_agent.py"
+      ],
+      "pass": false
+    },
+    "files_changed": [
+      "app/core/router/tool_router.py",
+      "app/mypytest/test_agent.py"
+    ],
+    "expected_hit": [
+      "app/core/router/tool_router.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 66,
+    "diff_removed": 5,
+    "retries": 1,
+    "apply_failures": 0,
+    "n_subtasks": 3,
+    "planner_model": "deepseek-reasoner",
+    "planner_usage": {
+      "prompt_tokens": 13555,
+      "completion_tokens": 13333,
+      "total_tokens": 26888
+    },
+    "executor_usage": {
+      "prompt_tokens": 7932,
+      "completion_tokens": 1909,
+      "total_tokens": 9841
+    },
+    "total_usage": {
+      "prompt_tokens": 21487,
+      "completion_tokens": 15242,
+      "total_tokens": 36729
+    },
+    "cost_usd": 0.012418,
+    "plan_seconds": 59.9,
+    "wall_seconds": 79.0,
+    "error": null
+  },
+  {
+    "project": "novelflow",
+    "goal_id": "N3",
+    "condition": "direct",
+    "task_type": "feature",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 2,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "app/mypytest/test_tools_math.py"
+      ],
+      "pass": true
+    },
+    "files_changed": [
+      "app/core/tools/base.py",
+      "app/core/tools/math.py",
+      "app/mypytest/test_tools_math.py"
+    ],
+    "expected_hit": [
+      "app/core/tools/base.py",
+      "app/core/tools/math.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 38,
+    "diff_removed": 3,
+    "retries": 0,
+    "apply_failures": 0,
+    "n_subtasks": null,
+    "planner_model": null,
+    "planner_usage": null,
+    "executor_usage": {
+      "prompt_tokens": 4415,
+      "completion_tokens": 718,
+      "total_tokens": 5133
+    },
+    "total_usage": {
+      "prompt_tokens": 4415,
+      "completion_tokens": 718,
+      "total_tokens": 5133
+    },
+    "cost_usd": 0.001538,
+    "plan_seconds": null,
+    "wall_seconds": 10.7,
+    "error": null
+  },
+  {
+    "project": "novelflow",
+    "goal_id": "N3",
+    "condition": "planned",
+    "task_type": "feature",
+    "check_pass": true,
+    "check_summary": {
+      "passed": 2,
+      "failed": 0,
+      "error": false
+    },
+    "model_tests": {
+      "files": [
+        "app/mypytest/test_agent.py"
+      ],
+      "pass": false
+    },
+    "files_changed": [
+      "app/core/tools/base.py",
+      "app/core/tools/math.py",
+      "app/mypytest/test_agent.py"
+    ],
+    "expected_hit": [
+      "app/core/tools/base.py",
+      "app/core/tools/math.py"
+    ],
+    "unexpected_src_files": [],
+    "diff_added": 29,
+    "diff_removed": 3,
+    "retries": 1,
+    "apply_failures": 0,
+    "n_subtasks": 5,
+    "planner_model": "deepseek-reasoner",
+    "planner_usage": {
+      "prompt_tokens": 21171,
+      "completion_tokens": 24685,
+      "total_tokens": 45856
+    },
+    "executor_usage": {
+      "prompt_tokens": 8771,
+      "completion_tokens": 1243,
+      "total_tokens": 10014
+    },
+    "total_usage": {
+      "prompt_tokens": 29942,
+      "completion_tokens": 25928,
+      "total_tokens": 55870
+    },
+    "cost_usd": 0.019274,
+    "plan_seconds": 107.6,
+    "wall_seconds": 126.2,
+    "error": null
+  }
+]
