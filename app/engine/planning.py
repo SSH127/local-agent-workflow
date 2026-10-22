@@ -2078,3 +2078,138 @@ def check_plan_grounding(specs: list[dict[str, Any]],
             if not (root / m).exists() and not allows_new:
                 warnings.append(f"子任务 {sid}: 描述中提到的文件 {m} 不存在")
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Live workflow: strict planner first, lenient fallback.
+
+
+class _RecordingLLM:
+    """Delegates to llm and remembers the last response content."""
+
+    def __init__(self, llm: Any) -> None:
+        self._llm = llm
+        self.last_content: Any = None
+
+    def chat(self, *args: Any, **kwargs: Any) -> Any:
+        resp = self._llm.chat(*args, **kwargs)
+        self.last_content = getattr(resp, "content", None)
+        return resp
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._llm, name)
+
+
+def strict_check(specs: list[dict[str, Any]], *, goal: str, workspace: Any,
+                 registry: list[dict[str, Any]] | None,
+                 coverage: list[dict[str, Any]] | None) -> list[str]:
+    """Return strict-gate + evidence-binding errors ([] = strict pass)."""
+    from app.planner.quality import classify_task_type, enforce_plan_quality
+    try:
+        enforce_plan_quality([dict(s) for s in specs], goal, workspace, strict=True)
+    except PlanError as exc:
+        return [str(exc)]
+    if registry:
+        from app.planner.evidence import check_evidence_binding
+        b_err, _missing = check_evidence_binding(
+            specs, registry, task_type=classify_task_type(goal), coverage=coverage)
+        if b_err:
+            return ["证据绑定失败：" + "；".join(b_err[:10])]
+    return []
+
+
+def request_subtasks_strict_first(
+    llm: Any,
+    messages: list[dict[str, Any]],
+    max_subtasks: int,
+    *,
+    goal: str,
+    workspace: Any,
+    clause_ids: list[str] | None = None,
+    registry: list[dict[str, Any]] | None = None,
+    retries: int = 1,
+    meta_out: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Strict planner for the live workflow with a lenient fallback.
+
+    1. Normal (lenient) request/validate loop — same LLM calls as before.
+    2. Strict gates + evidence binding on the accepted plan.
+    3. If strict fails and the model *attempted* phase-2 format (targets present),
+       one strict re-plan with the errors fed back (PLANNER_WORKFLOW_STRICT_RETRY).
+    4. Strict pass → optional critic (one revise, must re-pass strict) + handoff packets.
+    5. Otherwise keep the lenient plan (mode=lenient-fallback) and record why.
+    """
+    meta = meta_out if meta_out is not None else {}
+    meta.update({"mode": None, "strict_errors": [], "coverage": [], "critic": None})
+    rec = _RecordingLLM(llm)
+    specs, errors = request_subtasks(rec, messages, max_subtasks,
+                                     clause_ids=clause_ids, retries=retries)
+    if specs is None:
+        meta["mode"] = "failed"
+        return None, errors
+
+    def _coverage(content: Any) -> list[dict[str, Any]]:
+        try:
+            parsed = parse_plan_text(content)
+        except Exception:  # noqa: BLE001
+            return []
+        cov = parsed.get("coverage") if isinstance(parsed, dict) else None
+        return cov if isinstance(cov, list) else []
+
+    coverage = _coverage(rec.last_content)
+    s_err = strict_check(specs, goal=goal, workspace=workspace, registry=registry, coverage=coverage)
+    attempted = any(isinstance(s, dict) and s.get("targets") for s in specs)
+    if s_err and attempted and getattr(config, "PLANNER_WORKFLOW_STRICT_RETRY", True):
+        convo = list(messages) + [
+            {"role": "assistant", "content": str(rec.last_content or "")[:4000]},
+            {"role": "user", "content": "上面的计划未通过严格门禁：" + "；".join(s_err)[:1500]
+             + "。请修正后输出完整 JSON（targets 引用 evidence_id，write_scope 为精确文件）。"},
+        ]
+        try:
+            specs2, err2 = request_subtasks(rec, convo, max_subtasks,
+                                            clause_ids=clause_ids, retries=0)
+        except Exception as exc:  # noqa: BLE001
+            specs2, err2 = None, [f"严格重规划失败：{exc}"]
+        errors.extend(err2)
+        if specs2 is not None:
+            cov2 = _coverage(rec.last_content)
+            e2 = strict_check(specs2, goal=goal, workspace=workspace, registry=registry, coverage=cov2)
+            if not e2:
+                specs, coverage, s_err = specs2, cov2, []
+            else:
+                s_err = s_err + e2
+        meta["strict_retry"] = True
+    meta["strict_errors"] = s_err[:6]
+    if s_err:
+        meta["mode"] = "lenient-fallback"
+        return specs, errors
+    meta["mode"] = "strict"
+    meta["coverage"] = coverage
+    # Critic only for genuine phase-2 plans (targets present): legacy-format plans
+    # never trigger an extra LLM call.
+    attempted = any(isinstance(s, dict) and s.get("targets") for s in specs)
+    if attempted and getattr(config, "PLANNER_CRITIC", True) and getattr(config, "PLANNER_WORKFLOW_CRITIC", True):
+        from app.planner.quality import classify_task_type, critic_revise
+        try:
+            revised, cmeta = critic_revise(llm, goal, specs, task_type=classify_task_type(goal))
+        except Exception as exc:  # noqa: BLE001
+            revised, cmeta = None, {"verdict": "error", "error": str(exc)[:200]}
+        if revised is not None:
+            try:
+                rspecs = validate_subtasks({"subtasks": revised}, max_subtasks, clause_ids=clause_ids)
+                rcov = cmeta.get("revised_coverage") or coverage
+                if not strict_check(rspecs, goal=goal, workspace=workspace,
+                                    registry=registry, coverage=rcov):
+                    specs, meta["coverage"], cmeta["applied"] = rspecs, rcov, True
+                else:
+                    cmeta["applied"] = False
+            except PlanError as exc:
+                cmeta["applied"] = False
+                cmeta["rejected"] = str(exc)[:200]
+        meta["critic"] = {k: cmeta.get(k) for k in ("verdict", "applied", "issues")}
+    try:
+        from app.planner.quality import build_handoff_packets
+        meta["handoff_packets"] = build_handoff_packets(specs, workspace)
+    except Exception as exc:  # noqa: BLE001
+        meta["handoff_error"] = str(exc)[:200]
+    return specs, errors

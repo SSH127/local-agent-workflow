@@ -581,6 +581,7 @@ def _generate_specs(
         return P.single_subtask_spec(goal, ids), "single", []
     use_p2 = bool(getattr(config, "PLANNER_STRICT", False))
     explore_text = None
+    registry: list[dict[str, Any]] | None = None
     if use_p2 and getattr(config, "PLANNER_EXPLORE", False):
         try:
             from app.planner.explore import explore_repo
@@ -592,8 +593,10 @@ def _generate_specs(
                 goal, state.get("workspace") or config.WORKSPACE_PATH,
                 llm=None,
                 budget=int(getattr(config, "PLANNER_EXPLORE_BUDGET", 6) or 6),
+                clauses=clauses,
             )
             explore_text = er.text
+            registry = er.registry or None
             state["explore_meta"] = {
                 "budget_used": er.budget_used, "done_reason": er.done_reason,
                 "key_files": er.key_files, "key_symbols": er.key_symbols,
@@ -606,6 +609,9 @@ def _generate_specs(
     messages, _pack = P.build_grounded_planner_messages(
         goal, state.get("workspace"), config.MAX_SUBTASKS, clauses,
         phase2=use_p2, explore_text=explore_text)
+    if registry and getattr(config, "PLANNER_WORKFLOW_STRICT", True):
+        from app.planner.evidence import EVIDENCE_BINDING_HINT
+        messages[-1]["content"] += "\n" + EVIDENCE_BINDING_HINT
     if feedback:
         messages[-1]["content"] += (
             "\n\n用户拒绝了上一版计划，反馈如下，请据此重新拆解：\n"
@@ -613,8 +619,21 @@ def _generate_specs(
         )
     # Keep soft request_subtasks in the live workflow so existing runs/tests
     # stay compatible; try_plan.py uses request_subtasks_phase2 + critic.
-    specs, errors = P.request_subtasks(state["llm"], messages, config.MAX_SUBTASKS,
-                                       clause_ids=ids, retries=1)
+    if use_p2 and getattr(config, "PLANNER_WORKFLOW_STRICT", True):
+        pmeta: dict[str, Any] = {}
+        try:
+            specs, errors = P.request_subtasks_strict_first(
+                state["llm"], messages, config.MAX_SUBTASKS, goal=goal,
+                workspace=state.get("workspace") or config.WORKSPACE_PATH,
+                clause_ids=ids, registry=registry, retries=1, meta_out=pmeta)
+        except Exception as exc:  # noqa: BLE001  hard failure → old lenient path
+            pmeta = {"mode": "lenient-fallback", "strict_errors": [f"strict planner crashed: {exc}"[:300]]}
+            specs, errors = P.request_subtasks(state["llm"], messages, config.MAX_SUBTASKS,
+                                               clause_ids=ids, retries=1)
+        state["planner_meta"] = pmeta
+    else:
+        specs, errors = P.request_subtasks(state["llm"], messages, config.MAX_SUBTASKS,
+                                           clause_ids=ids, retries=1)
     if specs is None:
         return P.single_subtask_spec(goal, ids), "fallback", errors
     state["grounding_warnings"] = P.check_plan_grounding(specs, state.get("workspace"))
@@ -622,6 +641,16 @@ def _generate_specs(
 
 
 def _attach_grounding_warnings(state: Any, plan: dict[str, Any], source: str) -> None:
+    pmeta = state.pop("planner_meta", None) if hasattr(state, "pop") else None
+    if source == "llm" and pmeta:
+        plan["planner_meta"] = {k: pmeta.get(k) for k in
+                                ("mode", "strict_errors", "critic", "coverage", "strict_retry")
+                                if pmeta.get(k) is not None}
+        if pmeta.get("handoff_packets"):
+            plan["handoff_packets"] = pmeta["handoff_packets"]
+        if pmeta.get("mode") == "lenient-fallback":
+            plan.setdefault("notes", []).append(
+                "严格规划未通过，已回退到宽松计划：" + "；".join(pmeta.get("strict_errors") or [])[:300])
     warnings = state.pop("grounding_warnings", None) if hasattr(state, "pop") else None
     if source != "llm" or not warnings:
         return

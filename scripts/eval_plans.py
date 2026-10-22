@@ -167,7 +167,7 @@ def run_gates(goal: dict[str, Any], plan: dict[str, Any],
             path = str(t.get("path") or "").replace("\\", "/").lstrip("./")
             sym = str(t.get("symbol") or "").strip()
             status = str(t.get("status") or "confirmed").lower()
-            if status in {"to-verify", "to_verify", "unconfirmed"}:
+            if status in {"to-verify", "to_verify", "unconfirmed", "new"}:
                 continue
             if path and sym and workspace is not None:
                 if not _symbol_in_file(index, path, sym):

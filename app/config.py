@@ -232,6 +232,12 @@ PLANNER_CONTEXT_MAX_CHARS = int(os.getenv("PLANNER_CONTEXT_MAX_CHARS", "12000"))
 # Phase-2 planner: reject broad write globs / missing symbols; optional critic round.
 PLANNER_STRICT = _bool_env("PLANNER_STRICT", "true")
 PLANNER_CRITIC = _bool_env("PLANNER_CRITIC", "true")
+# Live workflow: strict gates + evidence binding first, lenient fallback on failure.
+PLANNER_WORKFLOW_STRICT = _bool_env("PLANNER_WORKFLOW_STRICT", "true")
+# One extra strict re-plan when the model attempted phase-2 format but failed gates.
+PLANNER_WORKFLOW_STRICT_RETRY = _bool_env("PLANNER_WORKFLOW_STRICT_RETRY", "true")
+# Critic pass (one revise) on strict-passing plans in the live workflow.
+PLANNER_WORKFLOW_CRITIC = _bool_env("PLANNER_WORKFLOW_CRITIC", "true")
 # Explore-before-plan: bounded search/read/caller loop before drafting.
 PLANNER_EXPLORE = _bool_env("PLANNER_EXPLORE", "true")
 PLANNER_EXPLORE_BUDGET = int(os.getenv("PLANNER_EXPLORE_BUDGET", "6"))
